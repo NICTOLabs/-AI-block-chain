@@ -1,6 +1,6 @@
 {
   "chain_id": "tdr-mainnet-1",
-  "genesis_time": 1784762621,
+  "genesis_time": 1784763950,
   "consensus": "hybrid-pos-poa",
   "initial_supply": 4500000000,
   "max_supply": 10000000000,
@@ -11,86 +11,86 @@
   },
   "allocations": [
     {
-      "address": "4dd038749b49255569d56b79eb4e67c6bc08b4e79f92f9a4095d671de67df072",
-      "public_key": "215e8f47d9c0e9c68ea4b3bd1bd9491ec7d94024317ce6d28728391d90c2f775",
+      "address": "795ca3616aad725d6336cecbf2d25bb532a6c797530822df8598e69565cf7cd4",
+      "public_key": "22b9b0714c40678cf4be542ae9b1c03759272f16cdbc036580213dbd700ced6d",
       "amount": 675000000,
       "description": "Team and advisors",
-      "lockup_until": 1910993021,
+      "lockup_until": 1910994350,
       "vesting": "linear_4_years"
     },
     {
-      "address": "0e83597144c81b18d64436810debf01bda44bc48150ac12d541a0c6415cd5b70",
-      "public_key": "a9bbe4528772e7fc8f31c334c4fd6046b0ce887fc77f4f27345ab64a459007b7",
+      "address": "273f061e8dda2f0e5a2787df9a27130f77b1c6c4019b635429d1f9de9ca944fb",
+      "public_key": "fab707beab3898ee96756a5c9aa7f0adbb9ba88c7cd733d592d403afa19ca013",
       "amount": 1575000000,
       "description": "Community and ecosystem",
       "vesting": "linear_4_years"
     },
     {
-      "address": "6f8958dc5eedc81631ae3f631af01d49ae0683c714160881f0c56acbe5aefba6",
-      "public_key": "05bd7be8aebd65cd8680db20bc076731c133fda93564c8d3772c2063609b68c7",
+      "address": "4e697d24ea8630597b88b32584f5bbc27b7c6a23355f20241f1d825d49de869c",
+      "public_key": "a886c455105be334cf1aaee38a0f95a33d976db6a4020b6dd09c69398304a428",
       "amount": 900000000,
       "description": "Treasury and operations",
       "vesting": "linear_4_years"
     },
     {
-      "address": "5d8a7a87a70789cbeac2811289cf13cf3bab7f3f9b32ffafa0b2431bf77f7dbd",
-      "public_key": "9c4bf137e0baa61c21e55966aa7640a9a06745502f6ffcf538de07a523732b1b",
+      "address": "5201bd84b6e4076c90ff386eaffb991b0ea3ebb191f13bb6e2262b5a9af4e4f7",
+      "public_key": "d5d632be1435ecd4094b4ec11cab1fea8630283d437ec77d2fe782ebc1ba9e42",
       "amount": 1125000000,
       "description": "Staking rewards pool",
       "vesting": "linear_4_years"
     },
     {
-      "address": "cd9a36f0802c6edc51e54b58df5e6ac792afd580c3b2b5ea34a8ed07ca1f9119",
-      "public_key": "4322f85e80baef8751aa7e1605f83efe369caffa364b89f9921c06a8895ffdac",
+      "address": "910bb69c042209d874059af3e2fba0a29894a39724f1b9d681a782d0273e6d59",
+      "public_key": "edc51366bc82fef49889ecd966d3d84738e979928413a8785e620f2f943da01b",
       "amount": 225000000,
       "description": "Liquidity and exchange listings",
       "vesting": "linear_4_years"
     },
     {
-      "address": "117a077314253364e73cc159c93c599f9e7fcb7bad1a2c49282f52fba9de605f",
-      "public_key": "d9c0174841a16eff9e2f75b82801850ca41c3151c6d7628ec69936b1cf3c6721",
+      "address": "c7ee40a364ee64e468d1c24c588dd1e28d738a6c944c6fba6708c0c0ef0b8ee3",
+      "public_key": "b4cbec6cee2f1582adf9e6f9ce478bacbff623d6ecd439a3b3dfca104a1eccf1",
       "amount": 100000,
       "description": "Genesis validator 1 stake",
       "vesting": "none"
     },
     {
-      "address": "b79f768e8a8a8f551cb34a52f436bb39b9981131a7d19739b9596cb12e92427c",
-      "public_key": "78d21f8389f39f00fb3dd166437b763b4c4de5786e14a7ec13538eb2ca46a572",
+      "address": "495afc69648ad706df99889ccb354d53b186cc1ef56e76fd8a7a9c37c8570e9c",
+      "public_key": "1862e7bee8df1b5ff0acdbbfae36f65a0adc6e27fa5edd1ed115bf58e5ebeba1",
       "amount": 100000,
       "description": "Genesis validator 2 stake",
       "vesting": "none"
     },
     {
-      "address": "cfdf87896cd84870d81a335693d62c5c8b302be67db9d80313da0d852aa17691",
-      "public_key": "2a778d905d7fb925336bc91d63d69893c618c59efb553a1f664ab4ae9527d54b",
+      "address": "eed6d97df7008383ecd8c090cbf153d2fed75933d47866bf10ec858c3f816ae1",
+      "public_key": "f49d003a71c0934929bee542a53af1575929feaf93bd95684473f5fc572c4a5d",
       "amount": 100000,
       "description": "Genesis validator 3 stake",
       "vesting": "none"
     },
     {
-      "address": "710fcd6d9ba635ef6469a9e40dfbad955a56ec24f66bff8af1789828dd5b1b25",
-      "public_key": "66f634ee95912b2ee681511fbc284bf0ebe8800f2a1b28b6933623e7e2dbb001",
+      "address": "2e71b6417ec7ea0df55d1123f7708ecaefe538891d7c78837ac668a8618407ec",
+      "public_key": "9b5840dddf69c8de386364cfa313dc195157c1feadc2918b1c8d4c621e20e90a",
       "amount": 100000,
       "description": "Genesis validator 4 stake",
       "vesting": "none"
     },
     {
-      "address": "3d5d63782e124b91ae7ebd5813340e23f1ca51ac2424573d63f06d1b29e6f1a3",
-      "public_key": "d5a0f0540cc4a3ff41cd2fbc36625849673830b4372adde57f29c9ee5eae628d",
+      "address": "abead1d7cecd0c6d993711cc73d222275661bef447d2a1ab0762b0bc814ae7cd",
+      "public_key": "92c8f7d2aebbfea8e2a0e31878c0e75c222f207aeca4cdc3f16298fd025bf27b",
       "amount": 100000,
       "description": "Genesis validator 5 stake",
       "vesting": "none"
     },
     {
-      "address": "58a07e8d307c72e46b236d784b6225a5165739e820ed1ec4f36a920d5d240709",
-      "public_key": "42e88acbc94a2fa598bbebedc9ddbae792d911c37f70ec768c3c3455948270fd",
+      "address": "2c0fdd40777415797375767bada2558211e70de3620a2bd632c1472f2a766b85",
+      "public_key": "3c166cf954c49b85ad55b3830d51e7d326957d377d5a5a9142fde06f23ba2819",
       "amount": 100000,
       "description": "Genesis validator 6 stake",
       "vesting": "none"
     },
     {
-      "address": "e87249a19be2bfc851723b05f149efbbd2ce68fbcb60b4726491eb0ea2ae2e3a",
-      "public_key": "29ba5e5efcd56d29fbd05eec8917a6329ea07a7e83798da8becd7e655f0ddd96",
+      "address": "4666db22cb2f5c38ccab822ed1e6877604cf4807614cb1aed2d7413d91d4ca44",
+      "public_key": "19f83dba52b422d65a026c5572e282b189bc06d6526e647adba50e3310a93232",
       "amount": 100000,
       "description": "Genesis validator 7 stake",
       "vesting": "none"
@@ -98,56 +98,56 @@
   ],
   "validators": [
     {
-      "address": "117a077314253364e73cc159c93c599f9e7fcb7bad1a2c49282f52fba9de605f",
-      "public_key": "d9c0174841a16eff9e2f75b82801850ca41c3151c6d7628ec69936b1cf3c6721",
+      "address": "c7ee40a364ee64e468d1c24c588dd1e28d738a6c944c6fba6708c0c0ef0b8ee3",
+      "public_key": "b4cbec6cee2f1582adf9e6f9ce478bacbff623d6ecd439a3b3dfca104a1eccf1",
       "stake": 100000,
       "country": "AE",
       "city": "Dubai",
       "contact": "validator-1@tender.network"
     },
     {
-      "address": "b79f768e8a8a8f551cb34a52f436bb39b9981131a7d19739b9596cb12e92427c",
-      "public_key": "78d21f8389f39f00fb3dd166437b763b4c4de5786e14a7ec13538eb2ca46a572",
+      "address": "495afc69648ad706df99889ccb354d53b186cc1ef56e76fd8a7a9c37c8570e9c",
+      "public_key": "1862e7bee8df1b5ff0acdbbfae36f65a0adc6e27fa5edd1ed115bf58e5ebeba1",
       "stake": 100000,
       "country": "DE",
       "city": "Frankfurt",
       "contact": "validator-2@tender.network"
     },
     {
-      "address": "cfdf87896cd84870d81a335693d62c5c8b302be67db9d80313da0d852aa17691",
-      "public_key": "2a778d905d7fb925336bc91d63d69893c618c59efb553a1f664ab4ae9527d54b",
+      "address": "eed6d97df7008383ecd8c090cbf153d2fed75933d47866bf10ec858c3f816ae1",
+      "public_key": "f49d003a71c0934929bee542a53af1575929feaf93bd95684473f5fc572c4a5d",
       "stake": 100000,
       "country": "KE",
       "city": "Nairobi",
       "contact": "validator-3@tender.network"
     },
     {
-      "address": "710fcd6d9ba635ef6469a9e40dfbad955a56ec24f66bff8af1789828dd5b1b25",
-      "public_key": "66f634ee95912b2ee681511fbc284bf0ebe8800f2a1b28b6933623e7e2dbb001",
+      "address": "2e71b6417ec7ea0df55d1123f7708ecaefe538891d7c78837ac668a8618407ec",
+      "public_key": "9b5840dddf69c8de386364cfa313dc195157c1feadc2918b1c8d4c621e20e90a",
       "stake": 100000,
       "country": "NG",
       "city": "Lagos",
       "contact": "validator-4@tender.network"
     },
     {
-      "address": "3d5d63782e124b91ae7ebd5813340e23f1ca51ac2424573d63f06d1b29e6f1a3",
-      "public_key": "d5a0f0540cc4a3ff41cd2fbc36625849673830b4372adde57f29c9ee5eae628d",
+      "address": "abead1d7cecd0c6d993711cc73d222275661bef447d2a1ab0762b0bc814ae7cd",
+      "public_key": "92c8f7d2aebbfea8e2a0e31878c0e75c222f207aeca4cdc3f16298fd025bf27b",
       "stake": 100000,
       "country": "SG",
       "city": "Singapore",
       "contact": "validator-5@tender.network"
     },
     {
-      "address": "58a07e8d307c72e46b236d784b6225a5165739e820ed1ec4f36a920d5d240709",
-      "public_key": "42e88acbc94a2fa598bbebedc9ddbae792d911c37f70ec768c3c3455948270fd",
+      "address": "2c0fdd40777415797375767bada2558211e70de3620a2bd632c1472f2a766b85",
+      "public_key": "3c166cf954c49b85ad55b3830d51e7d326957d377d5a5a9142fde06f23ba2819",
       "stake": 100000,
       "country": "US",
       "city": "New York",
       "contact": "validator-6@tender.network"
     },
     {
-      "address": "e87249a19be2bfc851723b05f149efbbd2ce68fbcb60b4726491eb0ea2ae2e3a",
-      "public_key": "29ba5e5efcd56d29fbd05eec8917a6329ea07a7e83798da8becd7e655f0ddd96",
+      "address": "4666db22cb2f5c38ccab822ed1e6877604cf4807614cb1aed2d7413d91d4ca44",
+      "public_key": "19f83dba52b422d65a026c5572e282b189bc06d6526e647adba50e3310a93232",
       "stake": 100000,
       "country": "ZA",
       "city": "Cape Town",
@@ -166,8 +166,8 @@
   "multisig": {
     "threshold": 2,
     "signers": [
-      "d9c0174841a16eff9e2f75b82801850ca41c3151c6d7628ec69936b1cf3c6721",
-      "78d21f8389f39f00fb3dd166437b763b4c4de5786e14a7ec13538eb2ca46a572"
+      "b4cbec6cee2f1582adf9e6f9ce478bacbff623d6ecd439a3b3dfca104a1eccf1",
+      "1862e7bee8df1b5ff0acdbbfae36f65a0adc6e27fa5edd1ed115bf58e5ebeba1"
     ]
   }
 }
