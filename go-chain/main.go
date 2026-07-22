@@ -51,6 +51,7 @@ type Transaction struct {
 type Block struct {
 	Index        uint64        `json:"index"`
 	Author       string        `json:"author"`
+	MinerAddress string        `json:"miner_address"`
 	PreviousHash string        `json:"previous_hash"`
 	Timestamp    int64         `json:"timestamp"`
 	Transactions []Transaction `json:"transactions"`
@@ -601,6 +602,43 @@ func (bc *Blockchain) RegisterValidator(address string, stake uint64) error {
 	return nil
 }
 
+func (bc *Blockchain) SubmitMinedBlock(block Block) error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	if len(bc.Chain) == 0 || block.Index != uint64(len(bc.Chain)) {
+		return fmt.Errorf("invalid block index")
+	}
+	prev := bc.Chain[len(bc.Chain)-1]
+	if block.PreviousHash != prev.BlockHash {
+		return fmt.Errorf("invalid previous hash")
+	}
+	if calculateHash(block) != block.BlockHash {
+		return fmt.Errorf("invalid block hash")
+	}
+	if !bc.validateBlock(block, prev) {
+		return fmt.Errorf("invalid block transactions")
+	}
+	author := block.Author
+	if author == "" {
+		author = block.MinerAddress
+	}
+	if author == "" {
+		return fmt.Errorf("missing miner address")
+	}
+	blockReward := uint64(5000000)
+	if account := bc.Ledger[author]; account != nil {
+		account.Balance += blockReward
+		bc.TokenSupply += blockReward
+	}
+	bc.applyBlock(block)
+	bc.Chain = append(bc.Chain, block)
+	bc.Pending = []Transaction{}
+	bc.adjustDifficulty()
+	bc.appendAuditEntry("block_submitted", author, fmt.Sprintf("index=%d txs=%d", block.Index, len(block.Transactions)))
+	atomic.AddInt64(&bc.ensureMetrics().blocksMined, 1)
+	return bc.saveToDisk()
+}
+
 func (bc *Blockchain) SubmitTransaction(tx Transaction) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
@@ -660,6 +698,10 @@ func (bc *Blockchain) ensureMetrics() *serverMetrics {
 }
 
 func (bc *Blockchain) MineBlock() (*Block, error) {
+	return bc.MineBlockFor("")
+}
+
+func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	if len(bc.Chain) == 0 {
@@ -667,9 +709,13 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 	}
 	prevHash := bc.Chain[len(bc.Chain)-1].BlockHash
 	author := bc.selectValidator()
+	if minerAddress != "" {
+		author = minerAddress
+	}
 	block := Block{
 		Index:        uint64(len(bc.Chain)),
 		Author:       author,
+		MinerAddress: author,
 		PreviousHash: prevHash,
 		Timestamp:    time.Now().Unix(),
 		Transactions: []Transaction{},
@@ -692,11 +738,9 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 			}
 			if tx.Fee > 0 {
 				burnAmount := tx.Fee * BurnRatePercent / 100
-				bc.Burn(burnAmount)
-				if author := bc.selectValidator(); author != "" {
-					if account := bc.Ledger[author]; account != nil {
-						account.Balance += burnAmount
-					}
+				bc.TokenSupply -= burnAmount
+				if account := bc.Ledger[author]; account != nil {
+					account.Balance += burnAmount
 				}
 			}
 			block.Transactions = append(block.Transactions, tx)
@@ -704,16 +748,20 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 			atomic.AddInt64(&bc.ensureMetrics().txAccepted, 1)
 		}
 	}
-	bc.DistributeRewards()
 	block = bc.proofOfWork(block)
 	if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
 		return nil, err
+	}
+	blockReward := uint64(5000000)
+	if account := bc.Ledger[author]; account != nil {
+		account.Balance += blockReward
+		bc.TokenSupply += blockReward
 	}
 	bc.applyBlock(block)
 	bc.Chain = append(bc.Chain, block)
 	bc.Pending = []Transaction{}
 	bc.adjustDifficulty()
-	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d", block.Index, len(block.Transactions)))
+	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d miner=%s", block.Index, len(block.Transactions), author))
 	atomic.AddInt64(&bc.ensureMetrics().blocksMined, 1)
 	if err := bc.saveToDisk(); err != nil {
 		return nil, err
@@ -1227,7 +1275,18 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		_ = json.NewEncoder(w).Encode(tx)
 	})
 	mux.HandleFunc("/api/mine", func(w http.ResponseWriter, r *http.Request) {
-		block, err := chain.MineBlock()
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			MinerAddress string `json:"miner_address"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		block, err := chain.MineBlockFor(payload.MinerAddress)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1235,6 +1294,24 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		p2p.broadcastBlock(block)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(block)
+	})
+	mux.HandleFunc("/api/miner/submit", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var block Block
+		if err := json.NewDecoder(r.Body).Decode(&block); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := chain.SubmitMinedBlock(block); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		p2p.broadcastBlock(&block)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "accepted", "hash": block.BlockHash})
 	})
 	mux.HandleFunc("/api/validators", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
