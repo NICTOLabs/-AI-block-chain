@@ -68,17 +68,28 @@ The following roadmap items are now implemented in the prototype:
 
 1. Cryptographic key generation and signature verification are present in the Rust, Go, and C++ implementations.
 2. Block validation and transaction processing are implemented in the chain logic, with a simple pending transaction pool and mining flow.
-3. Peer-to-peer networking and block propagation are implemented in the Go node, including bootstrap peer awareness and basic handshake-style messaging.
-4. A lightweight web dashboard and HTTP API service are available for basic interaction, wallet creation, transfers, staking, and tokenomics inspection.
-5. On-chain model registry state, agent-driven registry actions, service agreements, and usage metering are implemented as first-class features.
+3. Peer-to-peer networking and block propagation are implemented in the Go node, including bootstrap peer awareness, strict peer limits, and trust-scored peer handling.
+4. A lightweight web dashboard and HTTP API service are available for basic interaction, wallet creation, transfers, staking, tokenomics inspection, and monitoring.
+5. On-chain model registry state, agent-driven registry actions, service agreements, usage metering, and an audit trail are implemented as first-class features.
+6. Replay protection and nonce-based deduplication are enforced to prevent duplicate submissions from being accepted.
+7. Fork-aware chain selection now uses cumulative work to prefer stronger chains during reorgs.
+
+## Production-Readiness Additions
+
+The current prototype now includes the following operational safeguards:
+
+1. Stronger security and replay protection through nonce and transaction-id tracking.
+2. More robust consensus and fork handling through cumulative-work-based chain selection and stricter validation.
+3. Hardened networking and peer trust through explicit peer scoring, strict limits, and trusted-peer broadcast rules.
+4. Auditability, operational monitoring, and deployment safeguards through persistent audit logs, monitoring endpoints, and state persistence to disk.
 
 ## Next Development Phases
 
-1. Add replay protection and stronger transaction deduplication for repeated submissions.
-2. Introduce chain reorg recovery and fork-choice improvements for more robust network behavior.
-3. Expand peer discovery with a real bootstrap registry, peer reputation, and gossip-based propagation tuning.
-4. Add richer wallet and registry UX in the dashboard, including transaction history, proposal voting, and agreement management.
-5. Introduce AI-specific smart contracts or state-machine modules for SLA enforcement, service escrow settlement, and dynamic pricing.
+1. Add a proper permissioned validator set, multi-signature governance, and threshold-based authority rotation.
+2. Expand peer discovery with a real bootstrap registry, peer reputation, and gossip-based propagation tuning.
+3. Add richer wallet and registry UX in the dashboard, including transaction history, proposal voting, and agreement management.
+4. Introduce AI-specific smart contracts or state-machine modules for SLA enforcement, service escrow settlement, and dynamic pricing.
+5. Add deployment hardening such as TLS, identity attestation, rate limiting, and structured logging.
 
 ## Currency and Token Improvements
 

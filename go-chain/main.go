@@ -123,6 +123,13 @@ type Wallet struct {
 	PrivateKey ed25519.PrivateKey
 }
 
+type AuditEntry struct {
+	Timestamp int64  `json:"timestamp"`
+	Event     string `json:"event"`
+	Actor     string `json:"actor"`
+	Details   string `json:"details"`
+}
+
 type Blockchain struct {
 	mu           sync.RWMutex
 	Chain        []Block
@@ -138,14 +145,21 @@ type Blockchain struct {
 	Proposals    map[string]GovernanceProposal
 	Agreements   map[string]ServiceAgreement
 	UsageMeters  map[string]UsageMeter
+	UsedNonces   map[string]map[uint64]struct{}
+	SeenTxIDs    map[string]struct{}
+	AuditTrail   []AuditEntry
 }
 
 type P2PNode struct {
-	addr     string
-	peers    []string
-	chain    *Blockchain
-	listener net.Listener
-	shutdown chan struct{}
+	addr         string
+	peers        []string
+	peerScores   map[string]int
+	trustedPeers map[string]bool
+	chain        *Blockchain
+	listener     net.Listener
+	shutdown     chan struct{}
+	maxPeers     int
+	strictMode   bool
 }
 
 type NodeInfo struct {
@@ -154,17 +168,20 @@ type NodeInfo struct {
 }
 
 type nodeState struct {
-	Chain       []Block                       `json:"chain"`
-	Pending     []Transaction                 `json:"pending"`
-	Ledger      map[string]*Account           `json:"ledger"`
-	Registry    map[string]ModelEntry         `json:"registry"`
-	Consensus   string                        `json:"consensus"`
-	Authorities []string                      `json:"authorities"`
-	TokenSupply uint64                        `json:"token_supply"`
-	Escrows     map[string]Escrow             `json:"escrows"`
-	Proposals   map[string]GovernanceProposal `json:"proposals"`
-	Agreements  map[string]ServiceAgreement   `json:"agreements"`
-	UsageMeters map[string]UsageMeter         `json:"usage_meters"`
+	Chain       []Block                        `json:"chain"`
+	Pending     []Transaction                  `json:"pending"`
+	Ledger      map[string]*Account            `json:"ledger"`
+	Registry    map[string]ModelEntry          `json:"registry"`
+	Consensus   string                         `json:"consensus"`
+	Authorities []string                       `json:"authorities"`
+	TokenSupply uint64                         `json:"token_supply"`
+	Escrows     map[string]Escrow              `json:"escrows"`
+	Proposals   map[string]GovernanceProposal  `json:"proposals"`
+	Agreements  map[string]ServiceAgreement    `json:"agreements"`
+	UsageMeters map[string]UsageMeter          `json:"usage_meters"`
+	UsedNonces  map[string]map[uint64]struct{} `json:"used_nonces"`
+	SeenTxIDs   map[string]struct{}            `json:"seen_tx_ids"`
+	AuditTrail  []AuditEntry                   `json:"audit_trail"`
 }
 
 type p2pMessage struct {
@@ -218,6 +235,9 @@ func NewBlockchain(consensus ConsensusType, dataDir string) *Blockchain {
 		Proposals:   make(map[string]GovernanceProposal),
 		Agreements:  make(map[string]ServiceAgreement),
 		UsageMeters: make(map[string]UsageMeter),
+		UsedNonces:  make(map[string]map[uint64]struct{}),
+		SeenTxIDs:   make(map[string]struct{}),
+		AuditTrail:  []AuditEntry{},
 	}
 	bc.createGenesisBlock()
 	_ = os.MkdirAll(dataDir, 0o755)
@@ -254,6 +274,9 @@ func (bc *Blockchain) saveToDisk() error {
 		Proposals:   bc.Proposals,
 		Agreements:  bc.Agreements,
 		UsageMeters: bc.UsageMeters,
+		UsedNonces:  bc.UsedNonces,
+		SeenTxIDs:   bc.SeenTxIDs,
+		AuditTrail:  bc.AuditTrail,
 	}
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -283,6 +306,18 @@ func (bc *Blockchain) loadFromDisk() error {
 	bc.Proposals = state.Proposals
 	bc.Agreements = state.Agreements
 	bc.UsageMeters = state.UsageMeters
+	bc.UsedNonces = state.UsedNonces
+	bc.SeenTxIDs = state.SeenTxIDs
+	bc.AuditTrail = state.AuditTrail
+	if bc.UsedNonces == nil {
+		bc.UsedNonces = make(map[string]map[uint64]struct{})
+	}
+	if bc.SeenTxIDs == nil {
+		bc.SeenTxIDs = make(map[string]struct{})
+	}
+	if bc.AuditTrail == nil {
+		bc.AuditTrail = []AuditEntry{}
+	}
 	if state.Consensus == "poa" {
 		bc.Consensus = ProofOfAuthority
 	} else {
@@ -306,6 +341,7 @@ func (bc *Blockchain) AddAccount(address string, balance uint64, isAgent bool) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	bc.Ledger[address] = &Account{Address: address, Balance: balance, Staked: 0, IsAgent: isAgent}
+	bc.appendAuditEntry("account_created", address, fmt.Sprintf("balance=%d agent=%t", balance, isAgent))
 }
 
 func (bc *Blockchain) Stake(address string, amount uint64) {
@@ -317,6 +353,7 @@ func (bc *Blockchain) Stake(address string, amount uint64) {
 	}
 	account.Balance -= amount
 	account.Staked += amount
+	bc.appendAuditEntry("stake", address, fmt.Sprintf("amount=%d", amount))
 }
 
 func (bc *Blockchain) Slash(address string, amount uint64) {
@@ -328,6 +365,7 @@ func (bc *Blockchain) Slash(address string, amount uint64) {
 	}
 	account.Staked -= amount
 	account.Balance -= amount
+	bc.appendAuditEntry("slash", address, fmt.Sprintf("amount=%d", amount))
 }
 
 func (bc *Blockchain) estimateFee(tx Transaction, congestion int) uint64 {
@@ -378,6 +416,7 @@ func (bc *Blockchain) CreateEscrow(from, to string, amount uint64, serviceID str
 	id := fmt.Sprintf("escrow-%d", time.Now().UnixNano())
 	escrow := Escrow{ID: id, From: from, To: to, Amount: amount, ServiceID: serviceID, Status: "active"}
 	bc.Escrows[id] = escrow
+	bc.appendAuditEntry("escrow_created", from, fmt.Sprintf("to=%s amount=%d service_id=%s", to, amount, serviceID))
 	return escrow, nil
 }
 
@@ -387,6 +426,7 @@ func (bc *Blockchain) CreateProposal(title, description string) GovernancePropos
 	id := fmt.Sprintf("proposal-%d", time.Now().UnixNano())
 	proposal := GovernanceProposal{ID: id, Title: title, Description: description, Votes: make(map[string]bool), Status: "open"}
 	bc.Proposals[id] = proposal
+	bc.appendAuditEntry("proposal_created", "governance", fmt.Sprintf("id=%s title=%s", id, title))
 	return proposal
 }
 
@@ -399,6 +439,7 @@ func (bc *Blockchain) VoteProposal(id, voter string) {
 	}
 	proposal.Votes[voter] = true
 	bc.Proposals[id] = proposal
+	bc.appendAuditEntry("proposal_voted", voter, fmt.Sprintf("proposal_id=%s", id))
 }
 
 func (bc *Blockchain) AddAuthority(address string) {
@@ -411,21 +452,30 @@ func (bc *Blockchain) SubmitTransaction(tx Transaction) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	bc.Pending = append(bc.Pending, tx)
+	bc.appendAuditEntry("transaction_submitted", tx.From, fmt.Sprintf("tx_id=%s nonce=%d", tx.ID, tx.Nonce))
 }
 
 func (bc *Blockchain) EnqueueTransaction(tx Transaction) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
+	if tx.ID == "" {
+		tx.ID = fmt.Sprintf("tx-%d", time.Now().UnixNano())
+	}
+	if bc.isReplay(tx) {
+		bc.appendAuditEntry("transaction_rejected", tx.From, fmt.Sprintf("tx_id=%s nonce=%d", tx.ID, tx.Nonce))
+		return
+	}
 	for i, pending := range bc.Pending {
 		if pending.ID == tx.ID && pending.Nonce == tx.Nonce && pending.From == tx.From {
 			if tx.Fee > pending.Fee {
 				bc.Pending[i] = tx
-				return
+				bc.appendAuditEntry("transaction_replaced", tx.From, fmt.Sprintf("tx_id=%s", tx.ID))
 			}
 			return
 		}
 	}
 	bc.Pending = append(bc.Pending, tx)
+	bc.appendAuditEntry("transaction_queued", tx.From, fmt.Sprintf("tx_id=%s fee=%d", tx.ID, tx.Fee))
 }
 
 func (bc *Blockchain) MineBlock() (*Block, error) {
@@ -463,6 +513,7 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 				bc.Burn(burnAmount)
 			}
 			block.Transactions = append(block.Transactions, tx)
+			bc.markTransactionSeen(tx)
 		}
 	}
 	block = bc.proofOfWork(block)
@@ -473,6 +524,7 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 	bc.Chain = append(bc.Chain, block)
 	bc.Pending = []Transaction{}
 	bc.DistributeRewards()
+	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d", block.Index, len(block.Transactions)))
 	if err := bc.saveToDisk(); err != nil {
 		return nil, err
 	}
@@ -522,6 +574,24 @@ func (bc *Blockchain) proofOfWork(block Block) Block {
 		}
 		block.Nonce++
 	}
+}
+
+func (bc *Blockchain) computeChainWork(chain []Block) uint64 {
+	work := uint64(0)
+	for _, block := range chain {
+		hash := block.BlockHash
+		if hash == "" {
+			hash = calculateHash(block)
+		}
+		for _, r := range hash {
+			if r == '0' {
+				work++
+			} else {
+				break
+			}
+		}
+	}
+	return work
 }
 
 func (bc *Blockchain) validateBlock(block Block, prev Block) error {
@@ -575,15 +645,24 @@ func (bc *Blockchain) replaceChain(newChain []Block) bool {
 		return false
 	}
 	if len(newChain) <= len(bc.Chain) {
+		if len(newChain) == len(bc.Chain) && bc.computeChainWork(newChain) > bc.computeChainWork(bc.Chain) {
+			bc.Chain = newChain
+			bc.saveToDisk()
+			return true
+		}
 		return false
 	}
 	bc.Chain = newChain
+	bc.appendAuditEntry("chain_replaced", "network", fmt.Sprintf("height=%d", len(newChain)))
 	bc.saveToDisk()
 	return true
 }
 
 func (bc *Blockchain) validateTransaction(tx Transaction) bool {
 	if !verifyTransaction(tx) {
+		return false
+	}
+	if bc.isReplay(tx) {
 		return false
 	}
 	sender, ok := bc.Ledger[tx.From]
@@ -606,6 +685,39 @@ func (bc *Blockchain) validateTransaction(tx Transaction) bool {
 	default:
 		return false
 	}
+}
+
+func (bc *Blockchain) isReplay(tx Transaction) bool {
+	if tx.Nonce == 0 {
+		return false
+	}
+	if tx.ID != "" {
+		if _, seen := bc.SeenTxIDs[tx.ID]; seen {
+			return true
+		}
+	}
+	if _, exists := bc.UsedNonces[tx.From]; exists {
+		if _, used := bc.UsedNonces[tx.From][tx.Nonce]; used {
+			return true
+		}
+	}
+	return false
+}
+
+func (bc *Blockchain) markTransactionSeen(tx Transaction) {
+	if tx.ID != "" {
+		bc.SeenTxIDs[tx.ID] = struct{}{}
+	}
+	if tx.Nonce > 0 {
+		if bc.UsedNonces[tx.From] == nil {
+			bc.UsedNonces[tx.From] = make(map[uint64]struct{})
+		}
+		bc.UsedNonces[tx.From][tx.Nonce] = struct{}{}
+	}
+}
+
+func (bc *Blockchain) appendAuditEntry(event, actor, details string) {
+	bc.AuditTrail = append(bc.AuditTrail, AuditEntry{Timestamp: time.Now().Unix(), Event: event, Actor: actor, Details: details})
 }
 
 func (bc *Blockchain) applyBlock(block Block) {
@@ -737,6 +849,7 @@ func main() {
 	bootstrapPeers := flag.String("bootstrap-peers", "", "Comma-separated bootstrap peer addresses")
 	dataDir := flag.String("data-dir", "./data", "Directory to persist blockchain state")
 	consensus := flag.String("consensus", "pos", "Consensus type: pos or poa")
+	strictP2P := flag.Bool("strict-p2p", true, "Reject untrusted or duplicate peers")
 	flag.Parse()
 
 	var chainConsensus ConsensusType
@@ -747,7 +860,7 @@ func main() {
 	}
 
 	chain := NewBlockchain(chainConsensus, *dataDir)
-	p2p := &P2PNode{addr: fmt.Sprintf("127.0.0.1:%d", *p2pPort), peers: []string{}, chain: chain, shutdown: make(chan struct{})}
+	p2p := &P2PNode{addr: fmt.Sprintf("127.0.0.1:%d", *p2pPort), peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 8, strictMode: *strictP2P}
 	if *peer != "" {
 		p2p.peers = append(p2p.peers, *peer)
 	}
@@ -779,6 +892,27 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode) {
 	mux.HandleFunc("/api/chain", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(chain.snapshot())
+	})
+	mux.HandleFunc("/api/audit", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		chain.mu.RLock()
+		defer chain.mu.RUnlock()
+		_ = json.NewEncoder(w).Encode(chain.AuditTrail)
+	})
+	mux.HandleFunc("/api/monitoring", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		chain.mu.RLock()
+		defer chain.mu.RUnlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"height":               len(chain.Chain),
+			"pending_transactions": len(chain.Pending),
+			"token_supply":         chain.TokenSupply,
+			"audit_entries":        len(chain.AuditTrail),
+			"peer_count":           len(p2p.peers),
+			"trusted_peer_count":   len(p2p.trustedPeers),
+			"strict_p2p":           p2p.strictMode,
+			"consensus":            consensusName(chain.Consensus),
+		})
 	})
 	mux.HandleFunc("/api/mempool", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1008,8 +1142,11 @@ func (p2p *P2PNode) start() {
 
 func (p2p *P2PNode) connectToPeers() {
 	for _, peer := range p2p.peers {
-		if peer == "" {
+		if peer == "" || peer == p2p.addr {
 			continue
+		}
+		if len(p2p.peers) > p2p.maxPeers {
+			break
 		}
 		go func(target string) {
 			conn, err := net.Dial("tcp", target)
@@ -1018,6 +1155,8 @@ func (p2p *P2PNode) connectToPeers() {
 				return
 			}
 			defer conn.Close()
+			p2p.peerScores[target] = 1
+			p2p.trustedPeers[target] = true
 			_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers}})
 			p2p.handleConn(conn)
 		}(peer)
@@ -1062,7 +1201,14 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 			p2p.chain.EnqueueTransaction(*msg.Tx)
 		}
 		if msg.Type == "hello" && msg.Peer != nil {
-			p2p.peers = append(p2p.peers, msg.Peer.Address)
+			if p2p.strictMode && len(p2p.peers) >= p2p.maxPeers {
+				continue
+			}
+			if msg.Peer.Address != "" && msg.Peer.Address != p2p.addr {
+				p2p.peers = append(p2p.peers, msg.Peer.Address)
+				p2p.peerScores[msg.Peer.Address] = 1
+				p2p.trustedPeers[msg.Peer.Address] = true
+			}
 		}
 	}
 }
@@ -1072,7 +1218,7 @@ func (p2p *P2PNode) broadcastBlock(block *Block) {
 	payload, _ := json.Marshal(msg)
 	p2p.peers = append(p2p.peers, p2p.addr)
 	for _, peer := range p2p.peers {
-		if peer == "" || peer == p2p.addr {
+		if peer == "" || peer == p2p.addr || !p2p.trustedPeers[peer] {
 			continue
 		}
 		conn, err := net.Dial("tcp", peer)
