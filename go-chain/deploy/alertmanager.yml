@@ -1,0 +1,36 @@
+global:
+  resolve_timeout: 5m
+  slack_api_url: ''
+
+route:
+  group_by: ['alertname']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'oncall'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'oncall'
+      continue: true
+    - match:
+        severity: warning
+      receiver: 'team'
+
+receivers:
+  - name: 'oncall'
+    slack_configs:
+      - channel: '#tdr-oncall'
+        send_resolved: true
+    email_configs:
+      - to: 'oncall@tender.network'
+        from: 'alertmanager@tender.network'
+        smarthost: 'smtp.tender.network:587'
+        auth_username: 'alertmanager'
+        auth_password: '${SMTP_PASSWORD}'
+
+  - name: 'team'
+    email_configs:
+      - to: 'team@tender.network'
+        from: 'alertmanager@tender.network'
+        subject: 'TDR Node Alert: {{ .GroupLabels.alertname }}'
