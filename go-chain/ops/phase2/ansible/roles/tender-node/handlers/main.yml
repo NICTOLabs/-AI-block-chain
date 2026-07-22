@@ -1,0 +1,5 @@
+---
+- name: restart tender
+  systemd:
+    name: tender
+    state: restarted

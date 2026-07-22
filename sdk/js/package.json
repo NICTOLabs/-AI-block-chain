@@ -1,0 +1,9 @@
+{
+  "name": "tender-sdk",
+  "version": "0.1.0",
+  "description": "JavaScript SDK for the Tender AI-native blockchain",
+  "main": "index.js",
+  "scripts": {
+    "test": "node -e \"console.log('sdk placeholder')\""
+  }
+}

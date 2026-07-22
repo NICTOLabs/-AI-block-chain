@@ -1,0 +1,33 @@
+- hosts: all
+  become: true
+  tasks:
+    - name: Install required packages
+      apt:
+        update_cache: true
+        name:
+          - curl
+          - jq
+          - unzip
+          - ca-certificates
+        state: present
+
+    - name: Create tender user
+      user:
+        name: tender
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Create node directory
+      file:
+        path: /opt/tender
+        state: directory
+        owner: tender
+        group: tender
+        mode: '0755'
+
+    - name: Download node binary
+      get_url:
+        url: "https://example.invalid/tender-node"
+        dest: /usr/local/bin/tender-node
+        mode: '0755'

@@ -1,0 +1,18 @@
+groups:
+  - name: tender.rules
+    rules:
+      - alert: TenderNodeDown
+        expr: up{job="tender_nodes"} == 0
+        for: 2m
+        labels:
+          severity: critical
+      - alert: BlockProductionStalled
+        expr: increase(tender_blocks_produced[5m]) < 1
+        for: 5m
+        labels:
+          severity: critical
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 0.1
+        for: 10m
+        labels:
+          severity: warning

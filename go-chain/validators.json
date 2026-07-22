@@ -1,0 +1,13 @@
+{
+  "network": "tdr-testnet",
+  "validators": [
+    {
+      "name": "validator-kenya-01",
+      "public_key": "REPLACE_ME",
+      "weight": 100,
+      "country": "KE",
+      "region": "Nairobi",
+      "status": "active"
+    }
+  ]
+}

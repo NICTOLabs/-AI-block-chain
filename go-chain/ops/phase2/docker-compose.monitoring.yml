@@ -1,0 +1,46 @@
+version: '3.9'
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-rules.yml:/etc/prometheus/rules/prometheus-rules.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: change-me
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+  loki:
+    image: grafana/loki:3.1.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
+
+  promtail:
+    image: grafana/promtail:3.1.0
+    container_name: promtail
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/log:/var/log:ro
+
+volumes:
+  prometheus-data:
+  grafana-data:

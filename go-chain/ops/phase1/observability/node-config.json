@@ -1,0 +1,19 @@
+{
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "output": "/var/log/tender/node.log"
+  },
+  "metrics": {
+    "enabled": true,
+    "path": "/metrics",
+    "port": 9100,
+    "prometheus": true
+  },
+  "telemetry": {
+    "block_height": true,
+    "peer_count": true,
+    "tx_latency": true,
+    "disk_io": true
+  }
+}

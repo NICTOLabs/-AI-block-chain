@@ -1,0 +1,32 @@
+{
+  "title": "Tender Mainnet Overview",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Block Height",
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0},
+      "targets": [{"expr": "tender_block_height"}]
+    },
+    {
+      "type": "graph",
+      "title": "Peer Count",
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0},
+      "targets": [{"expr": "tender_peer_count"}]
+    },
+    {
+      "type": "graph",
+      "title": "Memory Usage",
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "100 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100"}]
+    },
+    {
+      "type": "graph",
+      "title": "Disk IO",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+      "targets": [{"expr": "rate(node_disk_read_bytes_total[5m])"}]
+    }
+  ]
+}

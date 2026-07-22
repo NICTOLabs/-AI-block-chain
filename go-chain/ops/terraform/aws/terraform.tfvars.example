@@ -1,0 +1,8 @@
+region = "us-east-1"
+validator_count = 7
+sentry_count = 3
+rpc_count = 2
+ami_id = "ami-0c02fb55956c7d316"
+validator_instance_type = "m6i.2xlarge"
+sentry_instance_type = "c6i.xlarge"
+rpc_instance_type = "c6i.2xlarge"

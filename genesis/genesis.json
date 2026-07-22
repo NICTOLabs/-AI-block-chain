@@ -1,0 +1,27 @@
+{
+  "chain_id": "tender-testnet-1",
+  "genesis_time": "2025-01-01T00:00:00Z",
+  "consensus": {
+    "type": "hybrid-pos-poa"
+  },
+  "validators": [
+    {
+      "address": "validator-01",
+      "stake": 1000,
+      "role": "poa"
+    }
+  ],
+  "allocations": [
+    {
+      "address": "human-wallet",
+      "balance": 1000000,
+      "currency": "TENDER"
+    },
+    {
+      "address": "agent-wallet",
+      "balance": 500000,
+      "currency": "TENDER"
+    }
+  ],
+  "native_currency": "TENDER"
+}

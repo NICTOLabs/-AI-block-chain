@@ -1,0 +1,7 @@
+---
+tender_binary_src: /tmp/tender-node
+tender_api_port: 8080
+tender_p2p_port: 3030
+tender_data_dir: /var/lib/tender
+tender_consensus: pos
+tender_api_key: ""

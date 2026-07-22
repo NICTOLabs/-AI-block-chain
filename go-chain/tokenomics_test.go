@@ -26,8 +26,25 @@ func TestSlashReducesStakeAndBalance(t *testing.T) {
 	if bc.Ledger["alice"].Staked != 60 {
 		t.Fatalf("expected staked amount to drop to 60, got %d", bc.Ledger["alice"].Staked)
 	}
-	if bc.Ledger["alice"].Balance != 960 {
-		t.Fatalf("expected balance to drop to 960, got %d", bc.Ledger["alice"].Balance)
+	if bc.Ledger["alice"].Balance != 996 {
+		t.Fatalf("expected balance to drop to 996 under the new penalty rule, got %d", bc.Ledger["alice"].Balance)
+	}
+}
+
+func TestDistributeRewardsAndBurn(t *testing.T) {
+	bc := NewBlockchain(ProofOfStake, t.TempDir())
+	bc.AddAccount("alice", 1000, false)
+	bc.Ledger["alice"].Staked = 100
+
+	bc.DistributeRewards()
+	if bc.Ledger["alice"].Balance <= 1000 {
+		t.Fatalf("expected staking rewards to increase balance, got %d", bc.Ledger["alice"].Balance)
+	}
+
+	initialSupply := bc.TokenSupply
+	bc.Burn(5)
+	if bc.TokenSupply >= initialSupply {
+		t.Fatalf("expected token supply to decrease when burned, got %d", bc.TokenSupply)
 	}
 }
 

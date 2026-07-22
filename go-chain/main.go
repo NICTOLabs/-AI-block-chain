@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -82,7 +83,9 @@ const (
 	BaseFee           uint64 = 5
 	FeeMultiplier     uint64 = 2
 	BurnRatePercent   uint64 = 1
-	RewardRatePercent uint64 = 1
+	RewardRatePercent uint64 = 4
+	MinStake          uint64 = 100
+	SlashPercent      uint64 = 10
 	CurrencyName      string = "TENDER"
 )
 
@@ -167,6 +170,7 @@ type Blockchain struct {
 	AuditTrail   []AuditEntry
 	Wallets      map[string]ManagedWallet
 	Validators   map[string]Validator
+	metrics      *serverMetrics
 }
 
 type P2PNode struct {
@@ -188,6 +192,11 @@ type serverConfig struct {
 	RateWindow  time.Duration
 	EnableTLS   bool
 	MetricsPath string
+	APIPort     int
+	P2PPort     int
+	DataDir     string
+	Consensus   string
+	StrictP2P   bool
 }
 
 type rateLimiter struct {
@@ -202,6 +211,10 @@ type serverMetrics struct {
 	requestCount  int64
 	errorCount    int64
 	lastRequestAt time.Time
+	blocksMined   int64
+	peersSeen     int64
+	txAccepted    int64
+	txRejected    int64
 }
 
 type NodeInfo struct {
@@ -282,6 +295,7 @@ func NewBlockchain(consensus ConsensusType, dataDir string) *Blockchain {
 		AuditTrail:  []AuditEntry{},
 		Wallets:     make(map[string]ManagedWallet),
 		Validators:  make(map[string]Validator),
+		metrics:     &serverMetrics{},
 	}
 	bc.createGenesisBlock()
 	_ = os.MkdirAll(dataDir, 0o755)
@@ -382,11 +396,15 @@ func (bc *Blockchain) seedDemoState() {
 	bc.AddAuthority("agentA")
 }
 
+func (bc *Blockchain) addAccountLocked(address string, balance uint64, isAgent bool) {
+	bc.Ledger[address] = &Account{Address: address, Balance: balance, Staked: 0, IsAgent: isAgent}
+	bc.appendAuditEntry("account_created", address, fmt.Sprintf("balance=%d agent=%t", balance, isAgent))
+}
+
 func (bc *Blockchain) AddAccount(address string, balance uint64, isAgent bool) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	bc.Ledger[address] = &Account{Address: address, Balance: balance, Staked: 0, IsAgent: isAgent}
-	bc.appendAuditEntry("account_created", address, fmt.Sprintf("balance=%d agent=%t", balance, isAgent))
+	bc.addAccountLocked(address, balance, isAgent)
 }
 
 func (bc *Blockchain) CreateManagedWallet(label string, isAgent bool) (ManagedWallet, error) {
@@ -394,7 +412,7 @@ func (bc *Blockchain) CreateManagedWallet(label string, isAgent bool) (ManagedWa
 	defer bc.mu.Unlock()
 	wallet := NewWallet()
 	address := wallet.Address()
-	bc.AddAccount(address, 1000, isAgent)
+	bc.addAccountLocked(address, 1000, isAgent)
 	managed := ManagedWallet{ID: fmt.Sprintf("wallet-%d", time.Now().UnixNano()), Address: address, PublicKey: hex.EncodeToString(wallet.PublicKey), Label: label, IsAgent: isAgent}
 	bc.Wallets[managed.ID] = managed
 	bc.appendAuditEntry("wallet_created", address, fmt.Sprintf("label=%s agent=%t", label, isAgent))
@@ -420,9 +438,13 @@ func (bc *Blockchain) Slash(address string, amount uint64) {
 	if account == nil || account.Staked < amount {
 		return
 	}
+	penalty := amount * SlashPercent / 100
+	if penalty == 0 {
+		penalty = 1
+	}
 	account.Staked -= amount
-	account.Balance -= amount
-	bc.appendAuditEntry("slash", address, fmt.Sprintf("amount=%d", amount))
+	account.Balance -= penalty
+	bc.appendAuditEntry("slash", address, fmt.Sprintf("amount=%d penalty=%d", amount, penalty))
 }
 
 func (bc *Blockchain) estimateFee(tx Transaction, congestion int) uint64 {
@@ -439,7 +461,15 @@ func (bc *Blockchain) estimateFee(tx Transaction, congestion int) uint64 {
 	if congestionFactor > 10 {
 		congestionFactor = 10
 	}
-	return BaseFee + (baseComplexity * FeeMultiplier) + congestionFactor
+	baseFee := BaseFee + (baseComplexity * FeeMultiplier) + congestionFactor
+	if bc.TokenSupply > 0 {
+		if bc.TokenSupply < 1_000_000 {
+			baseFee += 2
+		} else if bc.TokenSupply > 10_000_000 {
+			baseFee -= 1
+		}
+	}
+	return baseFee
 }
 
 func (bc *Blockchain) DistributeRewards() {
@@ -449,6 +479,7 @@ func (bc *Blockchain) DistributeRewards() {
 		if account.Staked > 0 {
 			reward := account.Staked * RewardRatePercent / 100
 			account.Balance += reward
+			bc.TokenSupply += reward
 		}
 	}
 }
@@ -509,8 +540,8 @@ func (bc *Blockchain) RegisterValidator(address string, stake uint64) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	account := bc.Ledger[address]
-	if account == nil || account.Balance < stake {
-		return fmt.Errorf("insufficient funds")
+	if account == nil || account.Balance < stake || stake < MinStake {
+		return fmt.Errorf("insufficient funds or stake below minimum")
 	}
 	account.Balance -= stake
 	account.Staked += stake
@@ -549,6 +580,13 @@ func (bc *Blockchain) EnqueueTransaction(tx Transaction) {
 	bc.appendAuditEntry("transaction_queued", tx.From, fmt.Sprintf("tx_id=%s fee=%d", tx.ID, tx.Fee))
 }
 
+func (bc *Blockchain) ensureMetrics() *serverMetrics {
+	if bc.metrics == nil {
+		bc.metrics = &serverMetrics{}
+	}
+	return bc.metrics
+}
+
 func (bc *Blockchain) MineBlock() (*Block, error) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
@@ -577,14 +615,21 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 		if bc.validateTransaction(tx) {
 			fee := bc.estimateFee(tx, len(pending))
 			if tx.Fee < fee {
+				atomic.AddInt64(&bc.metrics.txRejected, 1)
 				continue
 			}
 			if tx.Fee > 0 {
 				burnAmount := tx.Fee * BurnRatePercent / 100
 				bc.Burn(burnAmount)
+				if author := bc.selectValidator(); author != "" {
+					if account := bc.Ledger[author]; account != nil {
+						account.Balance += burnAmount
+					}
+				}
 			}
 			block.Transactions = append(block.Transactions, tx)
 			bc.markTransactionSeen(tx)
+			atomic.AddInt64(&bc.ensureMetrics().txAccepted, 1)
 		}
 	}
 	block = bc.proofOfWork(block)
@@ -596,6 +641,7 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 	bc.Pending = []Transaction{}
 	bc.DistributeRewards()
 	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d", block.Index, len(block.Transactions)))
+	atomic.AddInt64(&bc.ensureMetrics().blocksMined, 1)
 	if err := bc.saveToDisk(); err != nil {
 		return nil, err
 	}
@@ -927,28 +973,95 @@ func currencySymbol() string {
 	return CurrencyName
 }
 
+func serverConfigFromEnv() serverConfig {
+	cfg := serverConfig{
+		APIKey:      getEnvOrDefault("TENDER_API_KEY", "change-me-in-production"),
+		EnableAuth:  getEnvBoolOrDefault("TENDER_ENABLE_AUTH", true),
+		RateLimit:   getEnvIntOrDefault("TENDER_RATE_LIMIT", 60),
+		RateWindow:  time.Duration(getEnvIntOrDefault("TENDER_RATE_WINDOW_SECONDS", 60)) * time.Second,
+		MetricsPath: getEnvOrDefault("TENDER_METRICS_PATH", "/metrics"),
+		APIPort:     getEnvIntOrDefault("TENDER_API_PORT", 8080),
+		P2PPort:     getEnvIntOrDefault("TENDER_P2P_PORT", 3030),
+		DataDir:     getEnvOrDefault("TENDER_DATA_DIR", "./data"),
+		Consensus:   strings.ToLower(getEnvOrDefault("TENDER_CONSENSUS", "pos")),
+		StrictP2P:   getEnvBoolOrDefault("TENDER_STRICT_P2P", true),
+	}
+	return cfg
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func getEnvIntOrDefault(key string, fallback int) int {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func getEnvBoolOrDefault(key string, fallback bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
 func main() {
-	apiPort := flag.Int("api-port", 8080, "HTTP API port")
-	p2pPort := flag.Int("p2p-port", 3030, "P2P listen port")
+	apiPort := flag.Int("api-port", 0, "HTTP API port")
+	p2pPort := flag.Int("p2p-port", 0, "P2P listen port")
 	peer := flag.String("peer", "", "Optional peer address")
 	bootstrapPeers := flag.String("bootstrap-peers", "", "Comma-separated bootstrap peer addresses")
-	dataDir := flag.String("data-dir", "./data", "Directory to persist blockchain state")
-	consensus := flag.String("consensus", "pos", "Consensus type: pos or poa")
-	strictP2P := flag.Bool("strict-p2p", true, "Reject untrusted or duplicate peers")
-	apiKey := flag.String("api-key", "change-me-in-production", "API key required for protected endpoints")
-	enableAuth := flag.Bool("enable-auth", true, "Require API key auth for mutating endpoints")
-	rateLimit := flag.Int("rate-limit", 60, "Requests per minute per client")
+	dataDir := flag.String("data-dir", "", "Directory to persist blockchain state")
+	consensus := flag.String("consensus", "", "Consensus type: pos or poa")
+	strictP2P := flag.Bool("strict-p2p", false, "Reject untrusted or duplicate peers")
+	apiKey := flag.String("api-key", "", "API key required for protected endpoints")
+	enableAuth := flag.Bool("enable-auth", false, "Require API key auth for mutating endpoints")
+	rateLimit := flag.Int("rate-limit", 0, "Requests per minute per client")
 	flag.Parse()
 
+	envCfg := serverConfigFromEnv()
+	if *apiPort != 0 {
+		envCfg.APIPort = *apiPort
+	}
+	if *p2pPort != 0 {
+		envCfg.P2PPort = *p2pPort
+	}
+	if *dataDir != "" {
+		envCfg.DataDir = *dataDir
+	}
+	if *consensus != "" {
+		envCfg.Consensus = strings.ToLower(*consensus)
+	}
+	if *strictP2P {
+		envCfg.StrictP2P = true
+	}
+	if *apiKey != "" {
+		envCfg.APIKey = *apiKey
+	}
+	if *enableAuth {
+		envCfg.EnableAuth = true
+	}
+	if *rateLimit != 0 {
+		envCfg.RateLimit = *rateLimit
+	}
+
 	var chainConsensus ConsensusType
-	if strings.ToLower(*consensus) == "poa" {
+	if envCfg.Consensus == "poa" {
 		chainConsensus = ProofOfAuthority
 	} else {
 		chainConsensus = ProofOfStake
 	}
 
-	chain := NewBlockchain(chainConsensus, *dataDir)
-	p2p := &P2PNode{addr: fmt.Sprintf("127.0.0.1:%d", *p2pPort), peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 8, strictMode: *strictP2P}
+	chain := NewBlockchain(chainConsensus, envCfg.DataDir)
+	p2p := &P2PNode{addr: fmt.Sprintf("127.0.0.1:%d", envCfg.P2PPort), peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 8, strictMode: envCfg.StrictP2P}
 	if *peer != "" {
 		p2p.peers = append(p2p.peers, *peer)
 	}
@@ -964,16 +1077,14 @@ func main() {
 
 	go p2p.start()
 	go p2p.connectToPeers()
-	cfg := serverConfig{APIKey: *apiKey, EnableAuth: *enableAuth, RateLimit: *rateLimit, RateWindow: time.Minute, EnableTLS: false, MetricsPath: "/metrics"}
-	go startAPI(chain, *apiPort, p2p, cfg)
+	go startAPI(chain, envCfg.APIPort, p2p, envCfg)
 
-	fmt.Printf("%s blockchain node running on http://127.0.0.1:%d\n", CurrencyName, *apiPort)
-	fmt.Printf("P2P listener on %s\n", p2p.addr)
+	log.Printf("{\"event\":\"node_start\",\"currency\":\"%s\",\"api_port\":%d,\"p2p_port\":%d,\"consensus\":\"%s\"}", CurrencyName, envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus)
 	<-p2p.shutdown
 }
 
 func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
-	metrics := &serverMetrics{}
+	metrics := chain.ensureMetrics()
 	limiter := newRateLimiter(cfg.RateLimit, cfg.RateWindow)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -1289,15 +1400,28 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		_ = json.NewEncoder(w).Encode(meter)
 	})
 	mux.HandleFunc(cfg.MetricsPath, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"requests":        metrics.requestCount,
-			"errors":          metrics.errorCount,
-			"last_request_at": metrics.lastRequestAt.Format(time.RFC3339),
-		})
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		_, _ = fmt.Fprintf(w, "# HELP tender_http_requests_total Total HTTP requests\n")
+		_, _ = fmt.Fprintf(w, "# TYPE tender_http_requests_total counter\n")
+		_, _ = fmt.Fprintf(w, "tender_http_requests_total %d\n", atomic.LoadInt64(&metrics.requestCount))
+		_, _ = fmt.Fprintf(w, "# HELP tender_http_errors_total Total HTTP errors\n")
+		_, _ = fmt.Fprintf(w, "# TYPE tender_http_errors_total counter\n")
+		_, _ = fmt.Fprintf(w, "tender_http_errors_total %d\n", atomic.LoadInt64(&metrics.errorCount))
+		_, _ = fmt.Fprintf(w, "# HELP tender_blocks_mined_total Total blocks mined\n")
+		_, _ = fmt.Fprintf(w, "# TYPE tender_blocks_mined_total counter\n")
+		_, _ = fmt.Fprintf(w, "tender_blocks_mined_total %d\n", atomic.LoadInt64(&metrics.blocksMined))
+		_, _ = fmt.Fprintf(w, "# HELP tender_peers_seen_total Total peers observed\n")
+		_, _ = fmt.Fprintf(w, "# TYPE tender_peers_seen_total counter\n")
+		_, _ = fmt.Fprintf(w, "tender_peers_seen_total %d\n", atomic.LoadInt64(&metrics.peersSeen))
+		_, _ = fmt.Fprintf(w, "# HELP tender_tx_accepted_total Total accepted transactions\n")
+		_, _ = fmt.Fprintf(w, "# TYPE tender_tx_accepted_total counter\n")
+		_, _ = fmt.Fprintf(w, "tender_tx_accepted_total %d\n", atomic.LoadInt64(&metrics.txAccepted))
+		_, _ = fmt.Fprintf(w, "# HELP tender_tx_rejected_total Total rejected transactions\n")
+		_, _ = fmt.Fprintf(w, "# TYPE tender_tx_rejected_total counter\n")
+		_, _ = fmt.Fprintf(w, "tender_tx_rejected_total %d\n", atomic.LoadInt64(&metrics.txRejected))
 	})
 	mux.Handle("/", http.FileServer(http.Dir("./web")))
-	log.Printf("API server listening on :%d", port)
+	log.Printf("{\"event\":\"api_listen\",\"port\":%d}", port)
 	if err := http.ListenAndServe(":"+strconv.Itoa(port), mux); err != nil {
 		log.Fatal(err)
 	}
@@ -1318,7 +1442,7 @@ func (p2p *P2PNode) start() {
 			case <-p2p.shutdown:
 				return
 			default:
-				log.Printf("accept error: %v", err)
+				log.Printf("{\"event\":\"accept_error\",\"error\":\"%v\"}", err)
 			}
 			continue
 		}
@@ -1337,7 +1461,7 @@ func (p2p *P2PNode) connectToPeers() {
 		go func(target string) {
 			conn, err := net.Dial("tcp", target)
 			if err != nil {
-				log.Printf("connect to peer %s: %v", target, err)
+				log.Printf("{\"event\":\"connect_peer\",\"peer\":\"%s\",\"error\":\"%v\"}", target, err)
 				return
 			}
 			defer conn.Close()
@@ -1356,7 +1480,7 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("p2p read: %v", err)
+				log.Printf("{\"event\":\"p2p_read\",\"error\":\"%v\"}", err)
 			}
 			return
 		}
@@ -1366,7 +1490,7 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 		}
 		var msg p2pMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			log.Printf("p2p decode: %v", err)
+			log.Printf("{\"event\":\"p2p_decode\",\"error\":\"%v\"}", err)
 			continue
 		}
 		if msg.Type == "block" && msg.Block != nil {
@@ -1409,7 +1533,7 @@ func (p2p *P2PNode) broadcastBlock(block *Block) {
 		}
 		conn, err := net.Dial("tcp", peer)
 		if err != nil {
-			log.Printf("broadcast to %s: %v", peer, err)
+			log.Printf("{\"event\":\"broadcast\",\"peer\":\"%s\",\"error\":\"%v\"}", peer, err)
 			continue
 		}
 		_, _ = conn.Write(append(payload, '\n'))
@@ -1478,11 +1602,14 @@ func (rl *rateLimiter) allow(key string) bool {
 }
 
 func (m *serverMetrics) recordRequest(ok bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.requestCount++
-	if !ok {
-		m.errorCount++
+	if m == nil {
+		return
 	}
+	atomic.AddInt64(&m.requestCount, 1)
+	if !ok {
+		atomic.AddInt64(&m.errorCount, 1)
+	}
+	m.mu.Lock()
 	m.lastRequestAt = time.Now()
+	m.mu.Unlock()
 }

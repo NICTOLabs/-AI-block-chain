@@ -1,0 +1,61 @@
+---
+- name: Install required packages
+  apt:
+    name:
+      - curl
+      - jq
+      - ca-certificates
+      - sysstat
+    state: present
+    update_cache: true
+
+- name: Create tender user
+  user:
+    name: tender
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Create directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: tender
+    group: tender
+    mode: '0755'
+  loop:
+    - /opt/tender
+    - /var/lib/tender
+    - /var/log/tender
+
+- name: Copy node binary
+  copy:
+    src: "{{ tender_binary_src }}"
+    dest: /usr/local/bin/tender-node
+    mode: '0755'
+    owner: tender
+    group: tender
+
+- name: Configure sysctl
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+  loop:
+    - { name: 'net.core.somaxconn', value: '65535' }
+    - { name: 'net.ipv4.tcp_tw_reuse', value: '1' }
+    - { name: 'net.ipv4.tcp_max_syn_backlog', value: '65535' }
+
+- name: Template systemd unit
+  template:
+    src: tender.service.j2
+    dest: /etc/systemd/system/tender.service
+    mode: '0644'
+  notify: restart tender
+
+- name: Enable and start tender service
+  systemd:
+    name: tender
+    enabled: true
+    state: started

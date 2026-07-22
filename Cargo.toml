@@ -1,0 +1,8 @@
+[workspace]
+members = [
+  "consensus",
+  "agent-protocol",
+  "contracts",
+  "sdk/rust"
+]
+resolver = "2"

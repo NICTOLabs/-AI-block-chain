@@ -1,0 +1,19 @@
+version: "3.9"
+services:
+  tender-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+      - "3030:3030"
+    environment:
+      TENDER_API_KEY: change-me-in-production
+      TENDER_API_PORT: 8080
+      TENDER_P2P_PORT: 3030
+      TENDER_DATA_DIR: /data
+    volumes:
+      - tender-data:/data
+
+volumes:
+  tender-data:

@@ -1,0 +1,79 @@
+{
+  "network": "tdr-mainnet",
+  "native_token": "TDR",
+  "token_name": "TENDER",
+  "total_supply": 10000000000,
+  "initial_circulating": 2500000000,
+  "genesis_mint_cap": 4500000000,
+  "staking_reward_apy": 0.05,
+  "base_gas_fee": 5,
+  "fee_burn_rate": 0.01,
+  "inflation_start_year": 2026,
+  "inflation_decay_per_year": 0.15,
+  "min_inflation_rate": 0.005,
+  "block_reward_base": 100000000,
+  "validator_reward_share": 0.50,
+  "community_reward_share": 0.35,
+  "treasury_reward_share": 0.15,
+  "validator_performance_decay": 0.8,
+  "token_allocation": {
+    "team_and_advisors": {
+      "percentage": 0.15,
+      "vesting_schedule": "4_year_cliff_1_year",
+      "lockup_months": 12
+    },
+    "community_and_ecosystem": {
+      "percentage": 0.35,
+      "vesting_schedule": "linear_4_years",
+      "lockup_months": 6
+    },
+    "treasury_and_operations": {
+      "percentage": 0.20,
+      "vesting_schedule": "linear_5_years",
+      "lockup_months": 0
+    },
+    "staking_rewards_pool": {
+      "percentage": 0.25,
+      "vesting_schedule": "dynamic_based_on_staking",
+      "lockup_months": 0
+    },
+    "liquidity_and_listings": {
+      "percentage": 0.05,
+      "vesting_schedule": "immediate",
+      "lockup_months": 0
+    }
+  },
+  "staking_parameters": {
+    "minimum_stake": 100,
+    "unstake_lockup_period_days": 21,
+    "reward_payout_frequency": "monthly",
+    "slashing_penalty_percentage": 10,
+    "double_sign_slash_percentage": 100
+  },
+  "economic_safeguards": {
+    "max_supply_ceiling": 10000000000,
+    "circuit_breaker_threshold": 0.30,
+    "circuit_breaker_action": "pause_minting_for_24_hours",
+    "emergency_burn_enabled": true,
+    "treasury_community_vote_required": true
+  },
+  "fee_burn_mechanics": {
+    "base_burn_rate": 0.01,
+    "adaptive_burn_enabled": true,
+    "adaptive_burn_threshold_supply_ratio": 0.50,
+    "adaptive_burn_increase": 1.5,
+    "fee_burn_distribution": {
+      "permanent_burn": 0.70,
+      "community_fund": 0.30
+    }
+  },
+  "inflation_parameters": {
+    "start_year": 2026,
+    "initial_inflation_rate": 0.08,
+    "decay_per_epoch": 0.15,
+    "min_inflation_rate": 0.005,
+    "epoch_duration_years": 1,
+    "halving_enabled": true,
+    "target_issuance_at_maturity": 0.005
+  }
+}

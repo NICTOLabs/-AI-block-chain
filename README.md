@@ -26,19 +26,25 @@ A production-oriented blockchain and token platform built from scratch for both 
 - Hardened P2P peer trust scoring and strict peer limits
 - Audit trail, monitoring endpoints, and persistence safeguards for deployment use
 
+## Build everything from the repo root
+
+```bash
+chmod +x scripts/build_all.sh scripts/dev_node.sh
+./scripts/build_all.sh
+```
+
+## Run the Go node
+
+```bash
+./scripts/dev_node.sh
+```
+
 ## Run the Rust node
 
 ```bash
 cd rust-chain
 source "$HOME/.cargo/env"
 cargo run
-```
-
-## Run the Go node
-
-```bash
-cd go-chain
-go run . --api-port 8080 --p2p-port 3030
 ```
 
 Useful API routes:

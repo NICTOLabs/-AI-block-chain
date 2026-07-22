@@ -1,0 +1,24 @@
+groups:
+  - name: tender-alerts
+    rules:
+      - alert: ValidatorDown
+        expr: up{job="tender-nodes"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A validator node is down"
+      - alert: MissingBlocks
+        expr: increase(tender_blocks_produced[5m]) < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Block production has stalled"
+      - alert: HighCPU
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU usage high"

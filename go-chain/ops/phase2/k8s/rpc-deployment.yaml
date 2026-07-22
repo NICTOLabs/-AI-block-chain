@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tender-rpc
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: tender-rpc
+  template:
+    metadata:
+      labels:
+        app: tender-rpc
+    spec:
+      containers:
+      - name: tender-rpc
+        image: tender-node:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: TENDER_API_PORT
+          value: "8080"
+        - name: TENDER_P2P_PORT
+          value: "3030"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"

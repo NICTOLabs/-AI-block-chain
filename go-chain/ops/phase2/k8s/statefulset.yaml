@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tender-node
+spec:
+  serviceName: tender-node
+  replicas: 3
+  selector:
+    matchLabels:
+      app: tender-node
+  template:
+    metadata:
+      labels:
+        app: tender-node
+    spec:
+      containers:
+      - name: tender-node
+        image: tender-node:latest
+        ports:
+        - containerPort: 3030
+        - containerPort: 8080
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/tender
+        env:
+        - name: TENDER_DATA_DIR
+          value: /var/lib/tender
+        - name: TENDER_API_PORT
+          value: "8080"
+        - name: TENDER_P2P_PORT
+          value: "3030"
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 100Gi

@@ -1,0 +1,17 @@
+[Unit]
+Description=Tender blockchain node
+After=network.target
+
+[Service]
+Type=simple
+User=tender
+Group=tender
+WorkingDirectory=/opt/tender
+ExecStart=/usr/local/bin/tender-node --api-port {{ tender_api_port }} --p2p-port {{ tender_p2p_port }} --data-dir {{ tender_data_dir }} --consensus {{ tender_consensus }} --api-key {{ tender_api_key }}
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target

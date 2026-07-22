@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: SecurityAuditManifest
+metadata:
+  project: TDR
+  chain: go-chain
+  version: 1.0.0
+spec:
+  cryptographicPrimitives:
+    - name: Ed25519
+      purpose: Wallet signing and verification
+      implementation: crypto/ed25519
+      notes: Used for transaction signatures and deterministic wallet identity derivation.
+    - name: SHA-256
+      purpose: Address derivation and hashing
+      implementation: crypto/sha256
+      notes: Used for wallet address generation and basic content hashing.
+    - name: JSON serialization
+      purpose: Transaction encoding and RPC payloads
+      implementation: encoding/json
+      notes: Canonical JSON is used for signing payloads.
+    - name: UUID / ID generation
+      purpose: Transaction and agreement identifiers
+      implementation: crypto/rand and time-based identifiers
+      notes: Used for replay-resistant operation IDs.
+  auditTargets:
+    - path: go-chain/main.go
+      description: Core blockchain transaction, wallet, and signing logic.
+    - path: go-chain/main_test.go
+      description: Fuzz and regression coverage for signing and serialization.
+  recommendedAuditors:
+    - Trail of Bits
+    - Hacken
+  complianceNotes:
+    - Preserve deterministic signing behavior across versions.
+    - Document key management and multisig migration strategy.
+    - Keep cryptographic primitives version-pinned for audit reproducibility.

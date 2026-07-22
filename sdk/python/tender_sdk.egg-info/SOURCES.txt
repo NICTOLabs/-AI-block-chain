@@ -1,0 +1,8 @@
+setup.py
+tender_sdk/__init__.py
+tender_sdk/client.py
+tender_sdk.egg-info/PKG-INFO
+tender_sdk.egg-info/SOURCES.txt
+tender_sdk.egg-info/dependency_links.txt
+tender_sdk.egg-info/requires.txt
+tender_sdk.egg-info/top_level.txt

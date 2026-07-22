@@ -1,0 +1,32 @@
+{
+  "title": "Tender Network Overview",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Block Height",
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0},
+      "targets": [{"expr": "tender_block_height"}]
+    },
+    {
+      "type": "graph",
+      "title": "Peer Count",
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0},
+      "targets": [{"expr": "tender_peer_count"}]
+    },
+    {
+      "type": "graph",
+      "title": "RPC Latency",
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "rate(tender_http_requests_total[5m])"}]
+    },
+    {
+      "type": "graph",
+      "title": "CPU Usage",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+      "targets": [{"expr": "100 - (avg by(instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)"}]
+    }
+  ]
+}
