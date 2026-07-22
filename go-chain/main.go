@@ -615,8 +615,8 @@ func (bc *Blockchain) SubmitMinedBlock(block Block) error {
 	if calculateHash(block) != block.BlockHash {
 		return fmt.Errorf("invalid block hash")
 	}
-	if !bc.validateBlock(block, prev) {
-		return fmt.Errorf("invalid block transactions")
+	if err := bc.validateBlock(block, prev); err != nil {
+		return fmt.Errorf("invalid block transactions: %w", err)
 	}
 	author := block.Author
 	if author == "" {
