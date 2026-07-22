@@ -4,7 +4,7 @@
 TDR is a mineable Proof-of-Work blockchain. Anyone can mine blocks and earn block rewards.
 
 ## Block Reward
-- **Base Reward:** 5,000,000 TDR per block
+- **Base Reward:** 100 TDR per block
 - **Fee Burn:** 1% of transaction fees are burned
 - **Dynamic Difficulty:** Adjusts every block to maintain ~5 second block times
 
@@ -88,7 +88,8 @@ curl http://localhost:8080/api/chain | jq '.chain[] | select(.author == "YOUR_AD
 ## Economics
 - **Block Time:** ~5 seconds
 - **Daily Blocks:** ~17,280
-- **Daily Rewards:** ~86,400,000,000 TDR
+- **Daily Rewards:** ~1,728,000 TDR
+- **Annual Inflation:** ~0.6% at maturity
 - **Halving:** No halving; fixed reward with inflation decay
 
 ## Requirements

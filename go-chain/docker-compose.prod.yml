@@ -68,3 +68,17 @@ services:
     depends_on:
       - tender-node
     restart: unless-stopped
+
+  mining-pool:
+    image: tender-pool:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.pool
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./pool-data:/root/pool
+    environment:
+      - POOL_ADDRESS=${POOL_ADDRESS}
+      - MIN_PAYOUT=${MIN_PAYOUT:-1000}
+    restart: unless-stopped

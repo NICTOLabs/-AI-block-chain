@@ -1,0 +1,7 @@
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates tzdata
+WORKDIR /root/
+COPY --from=builder /tender-pool .
+EXPOSE 8083
+ENV TZ=UTC
+ENTRYPOINT ["/root/tender-pool"]

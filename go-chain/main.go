@@ -625,7 +625,7 @@ func (bc *Blockchain) SubmitMinedBlock(block Block) error {
 	if author == "" {
 		return fmt.Errorf("missing miner address")
 	}
-	blockReward := uint64(5000000)
+	blockReward := uint64(100)
 	if account := bc.Ledger[author]; account != nil {
 		account.Balance += blockReward
 		bc.TokenSupply += blockReward
@@ -752,7 +752,7 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
 		return nil, err
 	}
-	blockReward := uint64(5000000)
+	blockReward := uint64(100)
 	if account := bc.Ledger[author]; account != nil {
 		account.Balance += blockReward
 		bc.TokenSupply += blockReward
