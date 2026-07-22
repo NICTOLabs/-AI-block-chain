@@ -68,23 +68,23 @@ The following roadmap items are now implemented in the prototype:
 
 1. Cryptographic key generation and signature verification are present in the Rust, Go, and C++ implementations.
 2. Block validation and transaction processing are implemented in the chain logic, with a simple pending transaction pool and mining flow.
-3. Basic peer-to-peer networking and block propagation are implemented in the Go node.
-4. A lightweight web dashboard and HTTP API service are available for basic interaction.
-5. On-chain model registry state and agent-driven registry actions are implemented as first-class transaction types.
+3. Peer-to-peer networking and block propagation are implemented in the Go node, including bootstrap peer awareness and basic handshake-style messaging.
+4. A lightweight web dashboard and HTTP API service are available for basic interaction, wallet creation, transfers, staking, and tokenomics inspection.
+5. On-chain model registry state, agent-driven registry actions, service agreements, and usage metering are implemented as first-class features.
 
 ## Next Development Phases
 
-1. Add a real mempool with fee bidding, prioritization, and replacement rules.
-2. Introduce formal block validation rules, replay protection, and chain reorg handling.
-3. Expand peer discovery with bootstrap nodes, handshake messages, and gossip propagation.
-4. Add richer API and dashboard workflows for wallet creation, transfers, staking, and model registry management.
-5. Introduce AI-specific smart contracts or state-machine modules for service agreements, SLA enforcement, and usage metering.
+1. Add replay protection and stronger transaction deduplication for repeated submissions.
+2. Introduce chain reorg recovery and fork-choice improvements for more robust network behavior.
+3. Expand peer discovery with a real bootstrap registry, peer reputation, and gossip-based propagation tuning.
+4. Add richer wallet and registry UX in the dashboard, including transaction history, proposal voting, and agreement management.
+5. Introduce AI-specific smart contracts or state-machine modules for SLA enforcement, service escrow settlement, and dynamic pricing.
 
 ## Currency and Token Improvements
 
 To make the currency feel more useful and economically robust, the following improvements are recommended:
 
-- Introduce token sinks and sinks for compute usage, such as burning a small percentage of every inference payment.
+- Introduce token sinks for compute usage, such as burning a small percentage of every inference payment.
 - Add staking rewards and slashing so validators earn yield while misbehavior is penalized.
 - Implement transaction fees that are dynamic based on network congestion and model complexity.
 - Support stablecoin-like collateral or escrow for high-value AI services while keeping the base token as the settlement layer.
