@@ -36,6 +36,7 @@ type Transaction struct {
 	FromPubKey string          `json:"from_pubkey"`
 	To         string          `json:"to"`
 	Amount     uint64          `json:"amount"`
+	Fee        uint64          `json:"fee,omitempty"`
 	TxType     TransactionType `json:"tx_type"`
 	Payload    string          `json:"payload,omitempty"`
 	Signature  string          `json:"signature,omitempty"`
@@ -75,6 +76,30 @@ const (
 	ProofOfAuthority
 )
 
+const (
+	BaseFee           uint64 = 5
+	FeeMultiplier     uint64 = 2
+	BurnRatePercent   uint64 = 1
+	RewardRatePercent uint64 = 1
+)
+
+type Escrow struct {
+	ID        string `json:"id"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Amount    uint64 `json:"amount"`
+	ServiceID string `json:"service_id"`
+	Status    string `json:"status"`
+}
+
+type GovernanceProposal struct {
+	ID          string          `json:"id"`
+	Title       string          `json:"title"`
+	Description string          `json:"description"`
+	Votes       map[string]bool `json:"votes"`
+	Status      string          `json:"status"`
+}
+
 type Wallet struct {
 	PublicKey  ed25519.PublicKey
 	PrivateKey ed25519.PrivateKey
@@ -90,6 +115,9 @@ type Blockchain struct {
 	Authorities  []string
 	validatorIdx int
 	DataDir      string
+	TokenSupply  uint64
+	Escrows      map[string]Escrow
+	Proposals    map[string]GovernanceProposal
 }
 
 type P2PNode struct {
@@ -101,12 +129,15 @@ type P2PNode struct {
 }
 
 type nodeState struct {
-	Chain       []Block               `json:"chain"`
-	Pending     []Transaction         `json:"pending"`
-	Ledger      map[string]*Account   `json:"ledger"`
-	Registry    map[string]ModelEntry `json:"registry"`
-	Consensus   string                `json:"consensus"`
-	Authorities []string              `json:"authorities"`
+	Chain       []Block                       `json:"chain"`
+	Pending     []Transaction                 `json:"pending"`
+	Ledger      map[string]*Account           `json:"ledger"`
+	Registry    map[string]ModelEntry         `json:"registry"`
+	Consensus   string                        `json:"consensus"`
+	Authorities []string                      `json:"authorities"`
+	TokenSupply uint64                        `json:"token_supply"`
+	Escrows     map[string]Escrow             `json:"escrows"`
+	Proposals   map[string]GovernanceProposal `json:"proposals"`
 }
 
 type p2pMessage struct {
@@ -152,6 +183,9 @@ func NewBlockchain(consensus ConsensusType, dataDir string) *Blockchain {
 		Consensus:   consensus,
 		Authorities: []string{},
 		DataDir:     dataDir,
+		TokenSupply: 1_000_000_000,
+		Escrows:     make(map[string]Escrow),
+		Proposals:   make(map[string]GovernanceProposal),
 	}
 	bc.createGenesisBlock()
 	_ = os.MkdirAll(dataDir, 0o755)
@@ -243,6 +277,88 @@ func (bc *Blockchain) Stake(address string, amount uint64) {
 	account.Staked += amount
 }
 
+func (bc *Blockchain) Slash(address string, amount uint64) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	account := bc.Ledger[address]
+	if account == nil || account.Staked < amount {
+		return
+	}
+	account.Staked -= amount
+	account.Balance -= amount
+}
+
+func (bc *Blockchain) estimateFee(tx Transaction, congestion int) uint64 {
+	baseComplexity := uint64(1)
+	switch tx.TxType {
+	case RegisterModel:
+		baseComplexity = 3
+	case UpdateModel:
+		baseComplexity = 2
+	case PurchaseApiKey:
+		baseComplexity = 2
+	}
+	congestionFactor := uint64(congestion)
+	if congestionFactor > 10 {
+		congestionFactor = 10
+	}
+	return BaseFee + (baseComplexity * FeeMultiplier) + congestionFactor
+}
+
+func (bc *Blockchain) DistributeRewards() {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	for _, account := range bc.Ledger {
+		if account.Staked > 0 {
+			reward := account.Staked * RewardRatePercent / 100
+			account.Balance += reward
+		}
+	}
+}
+
+func (bc *Blockchain) Burn(amount uint64) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	if amount > bc.TokenSupply {
+		amount = bc.TokenSupply
+	}
+	bc.TokenSupply -= amount
+}
+
+func (bc *Blockchain) CreateEscrow(from, to string, amount uint64, serviceID string) (Escrow, error) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	fromAccount := bc.Ledger[from]
+	if fromAccount == nil || fromAccount.Balance < amount {
+		return Escrow{}, fmt.Errorf("insufficient funds")
+	}
+	fromAccount.Balance -= amount
+	id := fmt.Sprintf("escrow-%d", time.Now().UnixNano())
+	escrow := Escrow{ID: id, From: from, To: to, Amount: amount, ServiceID: serviceID, Status: "active"}
+	bc.Escrows[id] = escrow
+	return escrow, nil
+}
+
+func (bc *Blockchain) CreateProposal(title, description string) GovernanceProposal {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	id := fmt.Sprintf("proposal-%d", time.Now().UnixNano())
+	proposal := GovernanceProposal{ID: id, Title: title, Description: description, Votes: make(map[string]bool), Status: "open"}
+	bc.Proposals[id] = proposal
+	return proposal
+}
+
+func (bc *Blockchain) VoteProposal(id, voter string) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	proposal := bc.Proposals[id]
+	if proposal.ID == "" {
+		return
+	}
+	proposal.Votes[voter] = true
+	bc.Proposals[id] = proposal
+}
+
 func (bc *Blockchain) AddAuthority(address string) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
@@ -273,6 +389,14 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 	}
 	for _, tx := range bc.Pending {
 		if bc.validateTransaction(tx) {
+			fee := bc.estimateFee(tx, len(bc.Pending))
+			if tx.Fee < fee {
+				continue
+			}
+			if tx.Fee > 0 {
+				burnAmount := tx.Fee * BurnRatePercent / 100
+				bc.Burn(burnAmount)
+			}
 			block.Transactions = append(block.Transactions, tx)
 		}
 	}
@@ -280,6 +404,7 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 	bc.applyBlock(block)
 	bc.Chain = append(bc.Chain, block)
 	bc.Pending = []Transaction{}
+	bc.DistributeRewards()
 	if err := bc.saveToDisk(); err != nil {
 		return nil, err
 	}
@@ -404,6 +529,9 @@ func (bc *Blockchain) snapshot() nodeState {
 		Registry:    bc.Registry,
 		Consensus:   consensusName(bc.Consensus),
 		Authorities: append([]string(nil), bc.Authorities...),
+		TokenSupply: bc.TokenSupply,
+		Escrows:     bc.Escrows,
+		Proposals:   bc.Proposals,
 	}
 }
 
@@ -546,6 +674,61 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode) {
 		_ = chain.saveToDisk()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": payload.Amount})
+	})
+	mux.HandleFunc("/api/tokenomics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		chain.mu.RLock()
+		defer chain.mu.RUnlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"token_supply":        chain.TokenSupply,
+			"burn_rate_percent":   BurnRatePercent,
+			"reward_rate_percent": RewardRatePercent,
+			"base_fee":            BaseFee,
+			"escrows":             chain.Escrows,
+			"proposals":           chain.Proposals,
+		})
+	})
+	mux.HandleFunc("/api/escrow", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			From      string `json:"from"`
+			To        string `json:"to"`
+			Amount    uint64 `json:"amount"`
+			ServiceID string `json:"service_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		escrow, err := chain.CreateEscrow(payload.From, payload.To, payload.Amount, payload.ServiceID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = chain.saveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(escrow)
+	})
+	mux.HandleFunc("/api/proposals", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Title       string `json:"title"`
+			Description string `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		proposal := chain.CreateProposal(payload.Title, payload.Description)
+		_ = chain.saveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(proposal)
 	})
 	mux.Handle("/", http.FileServer(http.Dir("./web")))
 	log.Printf("API server listening on :%d", port)
