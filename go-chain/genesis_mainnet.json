@@ -1,0 +1,55 @@
+{
+  "chain_id": "tdr-mainnet-1",
+  "genesis_time": "2026-09-01T00:00:00Z",
+  "consensus": "hybrid-pos-poa",
+  "initial_supply": 4500000000,
+  "max_supply": 10000000000,
+  "token": {
+    "name": "TENDER",
+    "symbol": "TDR",
+    "decimals": 8
+  },
+  "allocations": [
+    {
+      "address": "tdr1teamvesting...",
+      "amount": 675000000,
+      "description": "Team and advisors - 4-year vesting",
+      "lockup_months": 12
+    },
+    {
+      "address": "tdr1community...",
+      "amount": 1575000000,
+      "description": "Community and ecosystem fund"
+    },
+    {
+      "address": "tdr1treasury...",
+      "amount": 900000000,
+      "description": "Treasury and operations"
+    },
+    {
+      "address": "tdr1stakingrewards...",
+      "amount": 1125000000,
+      "description": "Staking rewards pool"
+    },
+    {
+      "address": "tdr1liquidity...",
+      "amount": 225000000,
+      "description": "Liquidity and exchange listings"
+    }
+  ],
+  "validators": [
+    {
+      "address": "tdr1validator...",
+      "stake": 100000,
+      "country": "KE",
+      "region": "Nairobi"
+    }
+  ],
+  "economics": {
+    "base_gas_fee": 5,
+    "burn_rate_percent": 1,
+    "reward_rate_percent": 4,
+    "inflation_start_year": 2026,
+    "inflation_decay_per_year": 0.15
+  }
+}
