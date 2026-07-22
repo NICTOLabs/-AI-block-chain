@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -44,6 +45,7 @@ type Transaction struct {
 	Payload    string          `json:"payload,omitempty"`
 	Signature  string          `json:"signature,omitempty"`
 	Timestamp  int64           `json:"timestamp"`
+	ChainID    string          `json:"chain_id,omitempty"`
 }
 
 type Block struct {
@@ -166,10 +168,15 @@ type Blockchain struct {
 	Agreements   map[string]ServiceAgreement
 	UsageMeters  map[string]UsageMeter
 	UsedNonces   map[string]map[uint64]struct{}
+	NextNonce    map[string]uint64
 	SeenTxIDs    map[string]struct{}
 	AuditTrail   []AuditEntry
 	Wallets      map[string]ManagedWallet
 	Validators   map[string]Validator
+	GenesisHash  string
+	ChainID      string
+	BlockTime    time.Duration
+	Difficulty   uint32
 	metrics      *serverMetrics
 }
 
@@ -183,6 +190,8 @@ type P2PNode struct {
 	shutdown     chan struct{}
 	maxPeers     int
 	strictMode   bool
+	nodeSecret   string
+	mutedPeers   map[string]time.Time
 }
 
 type serverConfig struct {
@@ -237,6 +246,7 @@ type nodeState struct {
 	UsedNonces  map[string]map[uint64]struct{} `json:"used_nonces"`
 	SeenTxIDs   map[string]struct{}            `json:"seen_tx_ids"`
 	AuditTrail  []AuditEntry                   `json:"audit_trail"`
+	NextNonce   map[string]uint64              `json:"next_nonce"`
 }
 
 type p2pMessage struct {
@@ -272,11 +282,12 @@ func (w *Wallet) Sign(tx Transaction) Transaction {
 func (tx Transaction) signingPayload() []byte {
 	clone := tx
 	clone.Signature = ""
+	clone.ID = ""
 	data, _ := json.Marshal(clone)
 	return data
 }
 
-func NewBlockchain(consensus ConsensusType, dataDir string) *Blockchain {
+func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blockchain {
 	bc := &Blockchain{
 		Chain:       []Block{},
 		Pending:     []Transaction{},
@@ -291,10 +302,14 @@ func NewBlockchain(consensus ConsensusType, dataDir string) *Blockchain {
 		Agreements:  make(map[string]ServiceAgreement),
 		UsageMeters: make(map[string]UsageMeter),
 		UsedNonces:  make(map[string]map[uint64]struct{}),
+		NextNonce:   make(map[string]uint64),
 		SeenTxIDs:   make(map[string]struct{}),
 		AuditTrail:  []AuditEntry{},
 		Wallets:     make(map[string]ManagedWallet),
 		Validators:  make(map[string]Validator),
+		ChainID:     chainID,
+		BlockTime:   time.Second * 5,
+		Difficulty:  0x2000,
 		metrics:     &serverMetrics{},
 	}
 	bc.createGenesisBlock()
@@ -307,6 +322,13 @@ func NewBlockchain(consensus ConsensusType, dataDir string) *Blockchain {
 }
 
 func (bc *Blockchain) createGenesisBlock() {
+	genesisPayload, _ := json.Marshal(map[string]any{
+		"chain_id":       bc.ChainID,
+		"timestamp":      time.Now().Unix(),
+		"initial_supply": bc.TokenSupply,
+		"consensus":      consensusName(bc.Consensus),
+	})
+	genesisHash := sha256.Sum256(genesisPayload)
 	genesis := Block{
 		Index:        0,
 		Author:       "genesis",
@@ -314,9 +336,10 @@ func (bc *Blockchain) createGenesisBlock() {
 		Timestamp:    time.Now().Unix(),
 		Transactions: []Transaction{},
 		Nonce:        0,
-		BlockHash:    "genesis",
+		BlockHash:    hex.EncodeToString(genesisHash[:]),
 	}
 	bc.Chain = append(bc.Chain, genesis)
+	bc.GenesisHash = genesis.BlockHash
 }
 
 func (bc *Blockchain) saveToDisk() error {
@@ -335,6 +358,7 @@ func (bc *Blockchain) saveToDisk() error {
 		UsedNonces:  bc.UsedNonces,
 		SeenTxIDs:   bc.SeenTxIDs,
 		AuditTrail:  bc.AuditTrail,
+		NextNonce:   bc.NextNonce,
 	}
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -367,6 +391,7 @@ func (bc *Blockchain) loadFromDisk() error {
 	bc.UsedNonces = state.UsedNonces
 	bc.SeenTxIDs = state.SeenTxIDs
 	bc.AuditTrail = state.AuditTrail
+	bc.NextNonce = state.NextNonce
 	bc.Wallets = make(map[string]ManagedWallet)
 	if bc.UsedNonces == nil {
 		bc.UsedNonces = make(map[string]map[uint64]struct{})
@@ -376,6 +401,23 @@ func (bc *Blockchain) loadFromDisk() error {
 	}
 	if bc.AuditTrail == nil {
 		bc.AuditTrail = []AuditEntry{}
+	}
+	if bc.NextNonce == nil {
+		bc.NextNonce = make(map[string]uint64)
+	}
+	for from, nonceMap := range bc.UsedNonces {
+		maxNonce := uint64(0)
+		for nonce := range nonceMap {
+			if nonce > maxNonce {
+				maxNonce = nonce
+			}
+		}
+		if maxNonce > 0 {
+			bc.NextNonce[from] = maxNonce + 1
+		}
+	}
+	if len(bc.Chain) > 0 {
+		bc.GenesisHash = bc.Chain[0].BlockHash
 	}
 	if state.Consensus == "poa" {
 		bc.Consensus = ProofOfAuthority
@@ -553,6 +595,11 @@ func (bc *Blockchain) RegisterValidator(address string, stake uint64) error {
 func (bc *Blockchain) SubmitTransaction(tx Transaction) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
+	next := bc.NextNonce[tx.From]
+	if tx.Nonce < next {
+		bc.appendAuditEntry("transaction_rejected", tx.From, fmt.Sprintf("tx_id=%s nonce=%d expected=%d", tx.ID, tx.Nonce, next))
+		return
+	}
 	bc.Pending = append(bc.Pending, tx)
 	bc.appendAuditEntry("transaction_submitted", tx.From, fmt.Sprintf("tx_id=%s nonce=%d", tx.ID, tx.Nonce))
 }
@@ -562,6 +609,9 @@ func (bc *Blockchain) EnqueueTransaction(tx Transaction) {
 	defer bc.mu.Unlock()
 	if tx.ID == "" {
 		tx.ID = fmt.Sprintf("tx-%d", time.Now().UnixNano())
+	}
+	if tx.Nonce == 0 {
+		tx.Nonce = bc.NextNonce[tx.From]
 	}
 	if bc.isReplay(tx) {
 		bc.appendAuditEntry("transaction_rejected", tx.From, fmt.Sprintf("tx_id=%s nonce=%d", tx.ID, tx.Nonce))
@@ -576,7 +626,20 @@ func (bc *Blockchain) EnqueueTransaction(tx Transaction) {
 			return
 		}
 	}
-	bc.Pending = append(bc.Pending, tx)
+	if uint64(len(bc.Pending)) >= 5000 {
+		lowestFeeIdx := 0
+		for i, p := range bc.Pending {
+			if p.Fee < bc.Pending[lowestFeeIdx].Fee {
+				lowestFeeIdx = i
+			}
+		}
+		if tx.Fee <= bc.Pending[lowestFeeIdx].Fee {
+			return
+		}
+		bc.Pending[lowestFeeIdx] = tx
+	} else {
+		bc.Pending = append(bc.Pending, tx)
+	}
 	bc.appendAuditEntry("transaction_queued", tx.From, fmt.Sprintf("tx_id=%s fee=%d", tx.ID, tx.Fee))
 }
 
@@ -632,6 +695,7 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 			atomic.AddInt64(&bc.ensureMetrics().txAccepted, 1)
 		}
 	}
+	bc.DistributeRewards()
 	block = bc.proofOfWork(block)
 	if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
 		return nil, err
@@ -639,7 +703,7 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 	bc.applyBlock(block)
 	bc.Chain = append(bc.Chain, block)
 	bc.Pending = []Transaction{}
-	bc.DistributeRewards()
+	bc.adjustDifficulty()
 	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d", block.Index, len(block.Transactions)))
 	atomic.AddInt64(&bc.ensureMetrics().blocksMined, 1)
 	if err := bc.saveToDisk(); err != nil {
@@ -693,9 +757,12 @@ func (bc *Blockchain) selectValidator() string {
 }
 
 func (bc *Blockchain) proofOfWork(block Block) Block {
+	target := uint64(1) << (64 - uint64(bc.Difficulty))
 	for {
 		hash := calculateHash(block)
-		if len(hash) >= 4 && hash[:4] == "0000" {
+		hashVal := new(big.Int)
+		hashVal.SetString(hash, 16)
+		if hashVal.Cmp(new(big.Int).SetUint64(target)) < 0 {
 			block.BlockHash = hash
 			return block
 		}
@@ -703,51 +770,26 @@ func (bc *Blockchain) proofOfWork(block Block) Block {
 	}
 }
 
-func (bc *Blockchain) computeChainWork(chain []Block) uint64 {
-	work := uint64(0)
-	for _, block := range chain {
-		hash := block.BlockHash
-		if hash == "" {
-			hash = calculateHash(block)
-		}
-		for _, r := range hash {
-			if r == '0' {
-				work++
-			} else {
-				break
-			}
-		}
+func (bc *Blockchain) adjustDifficulty() {
+	if len(bc.Chain) < 2 {
+		return
 	}
-	return work
+	last := bc.Chain[len(bc.Chain)-1]
+	prev := bc.Chain[len(bc.Chain)-2]
+	actualTime := time.Unix(last.Timestamp, 0).Sub(time.Unix(prev.Timestamp, 0))
+	if actualTime < bc.BlockTime && bc.Difficulty < 64 {
+		bc.Difficulty++
+	} else if actualTime > bc.BlockTime*2 && bc.Difficulty > 0 {
+		bc.Difficulty--
+	}
 }
 
-func (bc *Blockchain) validateBlock(block Block, prev Block) error {
-	if block.Index != prev.Index+1 {
-		return fmt.Errorf("invalid index")
-	}
-	if block.PreviousHash != prev.BlockHash {
-		return fmt.Errorf("invalid previous hash")
-	}
-	if block.BlockHash == "" {
-		return fmt.Errorf("missing block hash")
-	}
-	if calculateHash(block) != block.BlockHash {
-		return fmt.Errorf("invalid block hash")
-	}
-	seen := make(map[string]struct{})
-	for _, tx := range block.Transactions {
-		if tx.ID == "" {
-			return fmt.Errorf("missing transaction id")
-		}
-		if _, exists := seen[tx.ID]; exists {
-			return fmt.Errorf("duplicate transaction")
-		}
-		seen[tx.ID] = struct{}{}
-		if !bc.validateTransaction(tx) {
-			return fmt.Errorf("invalid transaction")
-		}
-	}
-	return nil
+func calculateHash(block Block) string {
+	clone := block
+	clone.BlockHash = ""
+	data, _ := json.Marshal(clone)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func (bc *Blockchain) validateChain(chain []Block) error {
@@ -772,11 +814,6 @@ func (bc *Blockchain) replaceChain(newChain []Block) bool {
 		return false
 	}
 	if len(newChain) <= len(bc.Chain) {
-		if len(newChain) == len(bc.Chain) && bc.computeChainWork(newChain) > bc.computeChainWork(bc.Chain) {
-			bc.Chain = newChain
-			bc.saveToDisk()
-			return true
-		}
 		return false
 	}
 	bc.Chain = newChain
@@ -786,6 +823,9 @@ func (bc *Blockchain) replaceChain(newChain []Block) bool {
 }
 
 func (bc *Blockchain) validateTransaction(tx Transaction) bool {
+	if tx.ChainID != bc.ChainID {
+		return false
+	}
 	if !verifyTransaction(tx) {
 		return false
 	}
@@ -794,6 +834,9 @@ func (bc *Blockchain) validateTransaction(tx Transaction) bool {
 	}
 	sender, ok := bc.Ledger[tx.From]
 	if !ok {
+		return false
+	}
+	if tx.From != tx.To && tx.Amount == 0 {
 		return false
 	}
 	switch tx.TxType {
@@ -818,13 +861,16 @@ func (bc *Blockchain) isReplay(tx Transaction) bool {
 	if tx.Nonce == 0 {
 		return false
 	}
-	if tx.ID != "" {
-		if _, seen := bc.SeenTxIDs[tx.ID]; seen {
+	if _, exists := bc.UsedNonces[tx.From]; exists {
+		if _, used := bc.UsedNonces[tx.From][tx.Nonce]; used {
 			return true
 		}
 	}
-	if _, exists := bc.UsedNonces[tx.From]; exists {
-		if _, used := bc.UsedNonces[tx.From][tx.Nonce]; used {
+	if bc.NextNonce[tx.From] > tx.Nonce {
+		return true
+	}
+	if tx.ID != "" {
+		if _, seen := bc.SeenTxIDs[tx.ID]; seen {
 			return true
 		}
 	}
@@ -840,6 +886,9 @@ func (bc *Blockchain) markTransactionSeen(tx Transaction) {
 			bc.UsedNonces[tx.From] = make(map[uint64]struct{})
 		}
 		bc.UsedNonces[tx.From][tx.Nonce] = struct{}{}
+		if bc.NextNonce[tx.From] <= tx.Nonce {
+			bc.NextNonce[tx.From] = tx.Nonce + 1
+		}
 	}
 }
 
@@ -929,6 +978,7 @@ func (bc *Blockchain) snapshot() nodeState {
 		Proposals:   bc.Proposals,
 		Agreements:  bc.Agreements,
 		UsageMeters: bc.UsageMeters,
+		NextNonce:   bc.NextNonce,
 	}
 }
 
@@ -941,6 +991,9 @@ func calculateHash(block Block) string {
 }
 
 func verifyTransaction(tx Transaction) bool {
+	if tx.ChainID == "" {
+		return false
+	}
 	pubKey, err := hex.DecodeString(tx.FromPubKey)
 	if err != nil {
 		return false
@@ -1025,6 +1078,7 @@ func main() {
 	apiKey := flag.String("api-key", "", "API key required for protected endpoints")
 	enableAuth := flag.Bool("enable-auth", false, "Require API key auth for mutating endpoints")
 	rateLimit := flag.Int("rate-limit", 0, "Requests per minute per client")
+	chainID := flag.String("chain-id", "tdr-mainnet-1", "Chain ID for replay protection")
 	flag.Parse()
 
 	envCfg := serverConfigFromEnv()
@@ -1060,8 +1114,8 @@ func main() {
 		chainConsensus = ProofOfStake
 	}
 
-	chain := NewBlockchain(chainConsensus, envCfg.DataDir)
-	p2p := &P2PNode{addr: fmt.Sprintf("127.0.0.1:%d", envCfg.P2PPort), peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 8, strictMode: envCfg.StrictP2P}
+	chain := NewBlockchain(chainConsensus, envCfg.DataDir, *chainID)
+	p2p := &P2PNode{addr: fmt.Sprintf("0.0.0.0:%d", envCfg.P2PPort), peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 50, strictMode: envCfg.StrictP2P}
 	if *peer != "" {
 		p2p.peers = append(p2p.peers, *peer)
 	}
@@ -1079,7 +1133,7 @@ func main() {
 	go p2p.connectToPeers()
 	go startAPI(chain, envCfg.APIPort, p2p, envCfg)
 
-	log.Printf("{\"event\":\"node_start\",\"currency\":\"%s\",\"api_port\":%d,\"p2p_port\":%d,\"consensus\":\"%s\"}", CurrencyName, envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus)
+	log.Printf("{\"event\":\"node_start\",\"currency\":\"%s\",\"api_port\":%d,\"p2p_port\":%d,\"consensus\":\"%s\",\"chain_id\":\"%s\"}", CurrencyName, envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus, *chainID)
 	<-p2p.shutdown
 }
 
@@ -1476,6 +1530,7 @@ func (p2p *P2PNode) connectToPeers() {
 func (p2p *P2PNode) handleConn(conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
+	remote := conn.RemoteAddr().String()
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -1488,10 +1543,14 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 		if line == "" {
 			continue
 		}
+		if len(line) > 5*1024*1024 {
+			log.Printf("{\"event\":\"p2p_oversize\",\"peer\":\"%s\"}", remote)
+			return
+		}
 		var msg p2pMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			log.Printf("{\"event\":\"p2p_decode\",\"error\":\"%v\"}", err)
-			continue
+			return
 		}
 		if msg.Type == "block" && msg.Block != nil {
 			p2p.chain.mu.Lock()
