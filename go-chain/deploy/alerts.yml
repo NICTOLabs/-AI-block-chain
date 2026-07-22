@@ -1,0 +1,43 @@
+groups:
+  - name: tender_node_alerts
+    interval: 30s
+    rules:
+      - alert: NodeDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TDR node is down"
+
+      - alert: HighErrorRate
+        expr: rate(tender_http_errors_total[5m]) / rate(tender_http_requests_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP error rate detected"
+
+      - alert: LowPeerCount
+        expr: tender_peers_seen_total < 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node has fewer than 3 peers"
+
+      - alert: HighMempoolSize
+        expr: tender_pending_transactions > 5000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mempool size exceeds 5000 transactions"
+
+      - alert: BlockProductionStalled
+        expr: increase(tender_blocks_mined_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No blocks mined in last 10 minutes"

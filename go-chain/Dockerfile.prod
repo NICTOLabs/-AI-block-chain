@@ -1,0 +1,18 @@
+FROM golang:1.22-alpine AS builder
+WORKDIR /app
+COPY go.mod ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /tender-node ./go-chain
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /genesis-tool ./go-chain/tools/genesis-tool
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates tzdata
+WORKDIR /root/
+COPY --from=builder /tender-node .
+COPY --from=builder /genesis-tool ./genesis-tool
+COPY --from=builder /app/go-chain/deploy/nginx.conf /etc/nginx/nginx.conf
+RUN mkdir -p /root/data /root/certs /root/logs
+EXPOSE 8080 3030 9090
+ENV TZ=UTC
+ENTRYPOINT ["/root/tender-node"]

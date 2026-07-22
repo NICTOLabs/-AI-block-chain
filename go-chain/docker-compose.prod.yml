@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  tender-node:
+    image: tender-node:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+      - "3030:3030"
+      - "9090:9090"
+    volumes:
+      - ./data:/app/data
+      - ./certs:/app/certs:ro
+    environment:
+      - TENDER_API_KEY=${TENDER_API_KEY}
+      - TENDER_ENABLE_AUTH=true
+      - TENDER_CONSENSUS=pos
+      - TENDER_DATA_DIR=/app/data
+      - TENDER_STRICT_P2P=true
+      - TENDER_ENABLE_TLS=true
+      - TENDER_TLS_CERT=/app/certs/fullchain.pem
+      - TENDER_TLS_KEY=/app/certs/privkey.pem
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./ops/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./ops/monitoring/grafana-dashboard.json:/etc/grafana/provisioning/dashboards/tdr.json
+      - ./grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_PASSWORD}
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./ops/phase1/tls/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - tender-node
+    restart: unless-stopped
