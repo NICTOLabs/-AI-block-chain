@@ -7,7 +7,8 @@
   <style>
     body { font-family: Arial, sans-serif; margin: 2rem; background: #07111f; color: #f5f7fb; }
     .card { background: #12233d; padding: 1rem; border-radius: 10px; margin: 1rem 0; }
-    button { background: #2dbd8a; color: white; border: none; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; }
+    button, input { background: #2dbd8a; color: white; border: none; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; margin: 0.3rem; }
+    input { background: white; color: #07111f; }
     pre { white-space: pre-wrap; background: #0b1628; padding: 0.8rem; border-radius: 6px; }
   </style>
 </head>
@@ -16,26 +17,58 @@
   <div class="card">
     <button onclick="loadData()">Refresh</button>
     <button onclick="mineBlock()">Mine block</button>
+    <button onclick="createWallet()">Create wallet</button>
   </div>
   <div class="card">
     <h2>Chain status</h2>
     <pre id="chain">Loading...</pre>
   </div>
   <div class="card">
-    <h2>Registry</h2>
-    <pre id="registry">Loading...</pre>
+    <h2>Tokenomics</h2>
+    <pre id="tokenomics">Loading...</pre>
+  </div>
+  <div class="card">
+    <h2>Actions</h2>
+    <div>
+      <input id="from" placeholder="From" />
+      <input id="to" placeholder="To" />
+      <input id="amount" placeholder="Amount" type="number" />
+      <input id="fee" placeholder="Fee" type="number" />
+      <button onclick="sendTransfer()">Send transfer</button>
+    </div>
+    <div>
+      <input id="stakeAddress" placeholder="Stake address" />
+      <input id="stakeAmount" placeholder="Stake amount" type="number" />
+      <button onclick="stake()">Stake</button>
+    </div>
   </div>
   <script>
     async function loadData() {
       const chainRes = await fetch('/api/chain');
       const chain = await chainRes.json();
       document.getElementById('chain').textContent = JSON.stringify(chain, null, 2);
-      const registryRes = await fetch('/api/registry');
-      const registry = await registryRes.json();
-      document.getElementById('registry').textContent = JSON.stringify(registry, null, 2);
+      const tokenomicsRes = await fetch('/api/tokenomics');
+      const tokenomics = await tokenomicsRes.json();
+      document.getElementById('tokenomics').textContent = JSON.stringify(tokenomics, null, 2);
     }
     async function mineBlock() {
       await fetch('/api/mine', { method: 'POST' });
+      await loadData();
+    }
+    async function createWallet() {
+      const res = await fetch('/api/wallet');
+      const data = await res.json();
+      alert(JSON.stringify(data));
+      await loadData();
+    }
+    async function sendTransfer() {
+      const payload = { from: document.getElementById('from').value, to: document.getElementById('to').value, amount: Number(document.getElementById('amount').value), fee: Number(document.getElementById('fee').value), tx_type: 'TRANSFER', nonce: 1 };
+      await fetch('/api/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      await loadData();
+    }
+    async function stake() {
+      const payload = { address: document.getElementById('stakeAddress').value, amount: Number(document.getElementById('stakeAmount').value) };
+      await fetch('/api/stake', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       await loadData();
     }
     loadData();

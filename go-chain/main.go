@@ -32,11 +32,13 @@ const (
 )
 
 type Transaction struct {
+	ID         string          `json:"id,omitempty"`
 	From       string          `json:"from"`
 	FromPubKey string          `json:"from_pubkey"`
 	To         string          `json:"to"`
 	Amount     uint64          `json:"amount"`
 	Fee        uint64          `json:"fee,omitempty"`
+	Nonce      uint64          `json:"nonce,omitempty"`
 	TxType     TransactionType `json:"tx_type"`
 	Payload    string          `json:"payload,omitempty"`
 	Signature  string          `json:"signature,omitempty"`
@@ -100,6 +102,22 @@ type GovernanceProposal struct {
 	Status      string          `json:"status"`
 }
 
+type ServiceAgreement struct {
+	ID           string `json:"id"`
+	Provider     string `json:"provider"`
+	Consumer     string `json:"consumer"`
+	ModelID      string `json:"model_id"`
+	PricePerCall uint64 `json:"price_per_call"`
+	MaxCalls     uint64 `json:"max_calls"`
+	Status       string `json:"status"`
+}
+
+type UsageMeter struct {
+	AgreementID string `json:"agreement_id"`
+	UsageCount  uint64 `json:"usage_count"`
+	TotalCost   uint64 `json:"total_cost"`
+}
+
 type Wallet struct {
 	PublicKey  ed25519.PublicKey
 	PrivateKey ed25519.PrivateKey
@@ -118,6 +136,8 @@ type Blockchain struct {
 	TokenSupply  uint64
 	Escrows      map[string]Escrow
 	Proposals    map[string]GovernanceProposal
+	Agreements   map[string]ServiceAgreement
+	UsageMeters  map[string]UsageMeter
 }
 
 type P2PNode struct {
@@ -126,6 +146,11 @@ type P2PNode struct {
 	chain    *Blockchain
 	listener net.Listener
 	shutdown chan struct{}
+}
+
+type NodeInfo struct {
+	Address string   `json:"address"`
+	Peers   []string `json:"peers"`
 }
 
 type nodeState struct {
@@ -138,12 +163,17 @@ type nodeState struct {
 	TokenSupply uint64                        `json:"token_supply"`
 	Escrows     map[string]Escrow             `json:"escrows"`
 	Proposals   map[string]GovernanceProposal `json:"proposals"`
+	Agreements  map[string]ServiceAgreement   `json:"agreements"`
+	UsageMeters map[string]UsageMeter         `json:"usage_meters"`
 }
 
 type p2pMessage struct {
-	Type  string `json:"type"`
-	From  string `json:"from,omitempty"`
-	Block *Block `json:"block,omitempty"`
+	Type  string       `json:"type"`
+	From  string       `json:"from,omitempty"`
+	Block *Block       `json:"block,omitempty"`
+	Chain []Block      `json:"chain,omitempty"`
+	Tx    *Transaction `json:"tx,omitempty"`
+	Peer  *NodeInfo    `json:"peer,omitempty"`
 }
 
 func NewWallet() *Wallet {
@@ -186,6 +216,8 @@ func NewBlockchain(consensus ConsensusType, dataDir string) *Blockchain {
 		TokenSupply: 1_000_000_000,
 		Escrows:     make(map[string]Escrow),
 		Proposals:   make(map[string]GovernanceProposal),
+		Agreements:  make(map[string]ServiceAgreement),
+		UsageMeters: make(map[string]UsageMeter),
 	}
 	bc.createGenesisBlock()
 	_ = os.MkdirAll(dataDir, 0o755)
@@ -217,6 +249,11 @@ func (bc *Blockchain) saveToDisk() error {
 		Registry:    bc.Registry,
 		Consensus:   consensusName(bc.Consensus),
 		Authorities: bc.Authorities,
+		TokenSupply: bc.TokenSupply,
+		Escrows:     bc.Escrows,
+		Proposals:   bc.Proposals,
+		Agreements:  bc.Agreements,
+		UsageMeters: bc.UsageMeters,
 	}
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -241,6 +278,11 @@ func (bc *Blockchain) loadFromDisk() error {
 	bc.Ledger = state.Ledger
 	bc.Registry = state.Registry
 	bc.Authorities = state.Authorities
+	bc.TokenSupply = state.TokenSupply
+	bc.Escrows = state.Escrows
+	bc.Proposals = state.Proposals
+	bc.Agreements = state.Agreements
+	bc.UsageMeters = state.UsageMeters
 	if state.Consensus == "poa" {
 		bc.Consensus = ProofOfAuthority
 	} else {
@@ -371,6 +413,21 @@ func (bc *Blockchain) SubmitTransaction(tx Transaction) {
 	bc.Pending = append(bc.Pending, tx)
 }
 
+func (bc *Blockchain) EnqueueTransaction(tx Transaction) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	for i, pending := range bc.Pending {
+		if pending.ID == tx.ID && pending.Nonce == tx.Nonce && pending.From == tx.From {
+			if tx.Fee > pending.Fee {
+				bc.Pending[i] = tx
+				return
+			}
+			return
+		}
+	}
+	bc.Pending = append(bc.Pending, tx)
+}
+
 func (bc *Blockchain) MineBlock() (*Block, error) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
@@ -387,9 +444,17 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 		Transactions: []Transaction{},
 		Nonce:        0,
 	}
-	for _, tx := range bc.Pending {
+	pending := make([]Transaction, len(bc.Pending))
+	copy(pending, bc.Pending)
+	sort.Slice(pending, func(i, j int) bool {
+		if pending[i].Fee == pending[j].Fee {
+			return pending[i].Timestamp < pending[j].Timestamp
+		}
+		return pending[i].Fee > pending[j].Fee
+	})
+	for _, tx := range pending {
 		if bc.validateTransaction(tx) {
-			fee := bc.estimateFee(tx, len(bc.Pending))
+			fee := bc.estimateFee(tx, len(pending))
 			if tx.Fee < fee {
 				continue
 			}
@@ -401,6 +466,9 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 		}
 	}
 	block = bc.proofOfWork(block)
+	if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
+		return nil, err
+	}
 	bc.applyBlock(block)
 	bc.Chain = append(bc.Chain, block)
 	bc.Pending = []Transaction{}
@@ -454,6 +522,64 @@ func (bc *Blockchain) proofOfWork(block Block) Block {
 		}
 		block.Nonce++
 	}
+}
+
+func (bc *Blockchain) validateBlock(block Block, prev Block) error {
+	if block.Index != prev.Index+1 {
+		return fmt.Errorf("invalid index")
+	}
+	if block.PreviousHash != prev.BlockHash {
+		return fmt.Errorf("invalid previous hash")
+	}
+	if block.BlockHash == "" {
+		return fmt.Errorf("missing block hash")
+	}
+	if calculateHash(block) != block.BlockHash {
+		return fmt.Errorf("invalid block hash")
+	}
+	seen := make(map[string]struct{})
+	for _, tx := range block.Transactions {
+		if tx.ID == "" {
+			return fmt.Errorf("missing transaction id")
+		}
+		if _, exists := seen[tx.ID]; exists {
+			return fmt.Errorf("duplicate transaction")
+		}
+		seen[tx.ID] = struct{}{}
+		if !bc.validateTransaction(tx) {
+			return fmt.Errorf("invalid transaction")
+		}
+	}
+	return nil
+}
+
+func (bc *Blockchain) validateChain(chain []Block) error {
+	if len(chain) == 0 {
+		return fmt.Errorf("empty chain")
+	}
+	if chain[0].Index != 0 {
+		return fmt.Errorf("invalid genesis")
+	}
+	for i := 1; i < len(chain); i++ {
+		if err := bc.validateBlock(chain[i], chain[i-1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (bc *Blockchain) replaceChain(newChain []Block) bool {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	if err := bc.validateChain(newChain); err != nil {
+		return false
+	}
+	if len(newChain) <= len(bc.Chain) {
+		return false
+	}
+	bc.Chain = newChain
+	bc.saveToDisk()
+	return true
 }
 
 func (bc *Blockchain) validateTransaction(tx Transaction) bool {
@@ -519,6 +645,36 @@ func (bc *Blockchain) applyBlock(block Block) {
 	}
 }
 
+func (bc *Blockchain) CreateServiceAgreement(provider, consumer, modelID string, pricePerCall, maxCalls uint64) (ServiceAgreement, error) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	if _, exists := bc.Agreements[modelID]; exists {
+		return ServiceAgreement{}, fmt.Errorf("agreement already exists")
+	}
+	agreement := ServiceAgreement{ID: fmt.Sprintf("agreement-%d", time.Now().UnixNano()), Provider: provider, Consumer: consumer, ModelID: modelID, PricePerCall: pricePerCall, MaxCalls: maxCalls, Status: "active"}
+	bc.Agreements[agreement.ID] = agreement
+	return agreement, nil
+}
+
+func (bc *Blockchain) RecordUsage(agreementID string, usageCount uint64) (UsageMeter, error) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	agreement, exists := bc.Agreements[agreementID]
+	if !exists {
+		return UsageMeter{}, fmt.Errorf("agreement not found")
+	}
+	if agreement.MaxCalls > 0 && usageCount > agreement.MaxCalls {
+		agreement.Status = "over_limit"
+		bc.Agreements[agreementID] = agreement
+	}
+	meter := bc.UsageMeters[agreementID]
+	meter.AgreementID = agreementID
+	meter.UsageCount += usageCount
+	meter.TotalCost += usageCount * agreement.PricePerCall
+	bc.UsageMeters[agreementID] = meter
+	return meter, nil
+}
+
 func (bc *Blockchain) snapshot() nodeState {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
@@ -532,11 +688,15 @@ func (bc *Blockchain) snapshot() nodeState {
 		TokenSupply: bc.TokenSupply,
 		Escrows:     bc.Escrows,
 		Proposals:   bc.Proposals,
+		Agreements:  bc.Agreements,
+		UsageMeters: bc.UsageMeters,
 	}
 }
 
 func calculateHash(block Block) string {
-	data, _ := json.Marshal(block)
+	clone := block
+	clone.BlockHash = ""
+	data, _ := json.Marshal(clone)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
@@ -574,6 +734,7 @@ func main() {
 	apiPort := flag.Int("api-port", 8080, "HTTP API port")
 	p2pPort := flag.Int("p2p-port", 3030, "P2P listen port")
 	peer := flag.String("peer", "", "Optional peer address")
+	bootstrapPeers := flag.String("bootstrap-peers", "", "Comma-separated bootstrap peer addresses")
 	dataDir := flag.String("data-dir", "./data", "Directory to persist blockchain state")
 	consensus := flag.String("consensus", "pos", "Consensus type: pos or poa")
 	flag.Parse()
@@ -589,6 +750,15 @@ func main() {
 	p2p := &P2PNode{addr: fmt.Sprintf("127.0.0.1:%d", *p2pPort), peers: []string{}, chain: chain, shutdown: make(chan struct{})}
 	if *peer != "" {
 		p2p.peers = append(p2p.peers, *peer)
+	}
+
+	if *bootstrapPeers != "" {
+		for _, peer := range strings.Split(*bootstrapPeers, ",") {
+			peer = strings.TrimSpace(peer)
+			if peer != "" {
+				p2p.peers = append(p2p.peers, peer)
+			}
+		}
 	}
 
 	go p2p.start()
@@ -610,6 +780,12 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(chain.snapshot())
 	})
+	mux.HandleFunc("/api/mempool", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		chain.mu.RLock()
+		defer chain.mu.RUnlock()
+		_ = json.NewEncoder(w).Encode(chain.Pending)
+	})
 	mux.HandleFunc("/api/transactions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -620,7 +796,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		chain.SubmitTransaction(tx)
+		chain.EnqueueTransaction(tx)
 		_ = chain.saveToDisk()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(tx)
@@ -674,6 +850,29 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode) {
 		_ = chain.saveToDisk()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": payload.Amount})
+	})
+	mux.HandleFunc("/api/wallet", func(w http.ResponseWriter, r *http.Request) {
+		wallet := NewWallet()
+		address := wallet.Address()
+		chain.AddAccount(address, 1000, false)
+		_ = chain.saveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"address": address, "public_key": hex.EncodeToString(wallet.PublicKey)})
+	})
+	mux.HandleFunc("/api/transfer", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload Transaction
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		chain.EnqueueTransaction(payload)
+		_ = chain.saveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
 	})
 	mux.HandleFunc("/api/tokenomics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -730,6 +929,53 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(proposal)
 	})
+	mux.HandleFunc("/api/agreements", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Provider     string `json:"provider"`
+			Consumer     string `json:"consumer"`
+			ModelID      string `json:"model_id"`
+			PricePerCall uint64 `json:"price_per_call"`
+			MaxCalls     uint64 `json:"max_calls"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		agreement, err := chain.CreateServiceAgreement(payload.Provider, payload.Consumer, payload.ModelID, payload.PricePerCall, payload.MaxCalls)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = chain.saveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(agreement)
+	})
+	mux.HandleFunc("/api/usage", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			AgreementID string `json:"agreement_id"`
+			UsageCount  uint64 `json:"usage_count"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		meter, err := chain.RecordUsage(payload.AgreementID, payload.UsageCount)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = chain.saveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(meter)
+	})
 	mux.Handle("/", http.FileServer(http.Dir("./web")))
 	log.Printf("API server listening on :%d", port)
 	if err := http.ListenAndServe(":"+strconv.Itoa(port), mux); err != nil {
@@ -772,7 +1018,7 @@ func (p2p *P2PNode) connectToPeers() {
 				return
 			}
 			defer conn.Close()
-			_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr})
+			_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers}})
 			p2p.handleConn(conn)
 		}(peer)
 	}
@@ -800,11 +1046,23 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 		}
 		if msg.Type == "block" && msg.Block != nil {
 			p2p.chain.mu.Lock()
+			if len(msg.Chain) > 0 {
+				if p2p.chain.replaceChain(msg.Chain) {
+					p2p.chain.mu.Unlock()
+					continue
+				}
+			}
 			if len(p2p.chain.Chain) < int(msg.Block.Index)+1 || p2p.chain.Chain[len(p2p.chain.Chain)-1].BlockHash != msg.Block.PreviousHash {
 				p2p.chain.Chain = append(p2p.chain.Chain, *msg.Block)
 				_ = p2p.chain.saveToDisk()
 			}
 			p2p.chain.mu.Unlock()
+		}
+		if msg.Type == "tx" && msg.Tx != nil {
+			p2p.chain.EnqueueTransaction(*msg.Tx)
+		}
+		if msg.Type == "hello" && msg.Peer != nil {
+			p2p.peers = append(p2p.peers, msg.Peer.Address)
 		}
 	}
 }
