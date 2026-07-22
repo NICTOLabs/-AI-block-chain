@@ -3,7 +3,7 @@ package main
 import "testing"
 
 func TestEstimateFeeUsesCongestionAndComplexity(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir())
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	transferFee := bc.estimateFee(Transaction{TxType: Transfer}, 0)
 	modelFee := bc.estimateFee(Transaction{TxType: RegisterModel, Payload: "model"}, 0)
 	if modelFee <= transferFee {
@@ -17,7 +17,7 @@ func TestEstimateFeeUsesCongestionAndComplexity(t *testing.T) {
 }
 
 func TestSlashReducesStakeAndBalance(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir())
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	bc.AddAccount("alice", 1000, false)
 	bc.Ledger["alice"].Staked = 100
 
@@ -32,7 +32,7 @@ func TestSlashReducesStakeAndBalance(t *testing.T) {
 }
 
 func TestDistributeRewardsAndBurn(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir())
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	bc.AddAccount("alice", 1000, false)
 	bc.Ledger["alice"].Staked = 100
 
@@ -49,7 +49,7 @@ func TestDistributeRewardsAndBurn(t *testing.T) {
 }
 
 func TestCreateEscrowLocksFunds(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir())
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	bc.AddAccount("alice", 1000, false)
 	bc.AddAccount("bob", 0, false)
 

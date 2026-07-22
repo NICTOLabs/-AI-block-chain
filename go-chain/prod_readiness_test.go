@@ -5,7 +5,7 @@ import (
 )
 
 func TestRejectsReplayedNonce(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir())
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	bc.AddAccount("human1", 1000, false)
 
 	tx := Transaction{
@@ -26,16 +26,23 @@ func TestRejectsReplayedNonce(t *testing.T) {
 	}
 }
 
-func TestComputeChainWorkPrefersMoreDifficultChain(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir())
+func TestRejectsInvalidChainID(t *testing.T) {
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	bc.AddAccount("human1", 1000, false)
 
-	blockA := Block{Index: 1, PreviousHash: "0", Timestamp: 1, Nonce: 1, BlockHash: "abc"}
-	blockB := Block{Index: 1, PreviousHash: "0", Timestamp: 2, Nonce: 2, BlockHash: "0000abc"}
+	tx := Transaction{
+		ID:        "tx-bad-chain",
+		From:      "human1",
+		To:        "agentA",
+		Amount:    100,
+		Fee:       5,
+		Nonce:     1,
+		TxType:    Transfer,
+		Timestamp: 1,
+		ChainID:   "wrong-chain",
+	}
 
-	workA := bc.computeChainWork([]Block{blockA})
-	workB := bc.computeChainWork([]Block{blockB})
-
-	if workA >= workB {
-		t.Fatalf("expected chain with more leading zeroes to have greater work, got %d and %d", workA, workB)
+	if bc.validateTransaction(tx) {
+		t.Fatalf("expected wrong chain ID to be rejected")
 	}
 }

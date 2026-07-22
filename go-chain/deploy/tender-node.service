@@ -1,0 +1,29 @@
+[Unit]
+Description=TDR Mainnet Validator Node
+Documentation=https://github.com/NICTOLabs/-AI-block-chain
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tender
+Group=tender
+WorkingDirectory=/opt/tender
+ExecStart=/opt/tender/tender-node --chain-id tdr-mainnet-1 --data-dir /opt/tender/data --consensus pos --api-port 8080 --p2p-port 3030 --enable-auth --strict-p2p
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+Environment="TENDER_API_KEY=${TENDER_API_KEY}"
+Environment="TENDER_ENABLE_AUTH=true"
+Environment="TENDER_STRICT_P2P=true"
+Environment="TENDER_DATA_DIR=/opt/tender/data"
+Environment="TENDER_CONSENSUS=pos"
+Environment="TENDER_CHAIN_ID=tdr-mainnet-1"
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tender-node
+
+[Install]
+WantedBy=multi-user.target

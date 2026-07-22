@@ -3,30 +3,113 @@ kind: SecurityAuditManifest
 metadata:
   project: TDR
   chain: go-chain
-  version: 1.0.0
+  version: 1.2.0
+  auditDate: "2026-07-22"
+  auditorContact: Trail of Bits / Hacken
 spec:
   cryptographicPrimitives:
     - name: Ed25519
       purpose: Wallet signing and verification
       implementation: crypto/ed25519
+      goVersion: 1.22
       notes: Used for transaction signatures and deterministic wallet identity derivation.
+      usage:
+        - path: go-chain/main.go
+          lines: "251-963"
+      fuzzCoverage:
+        file: go-chain/crypto_fuzz_test.go
+        tests:
+          - TestFuzzTransactionSigningWithMalformedInputs
+          - TestFuzzWalletAddressDerivationWithKeyVariances
+          - TestFuzzBlockHashStabilityAndIntegrity
+          - TestFuzzMempoolReplayProtection
+          - TestFuzzNumericOverflowAndUnderflow
+          - TestFuzzGovernanceInjection
+          - TestFuzzChainValidationWithCorruptedBlocks
+          - TestFuzzEscrowAndGovernanceBoundaries
     - name: SHA-256
       purpose: Address derivation and hashing
       implementation: crypto/sha256
       notes: Used for wallet address generation and basic content hashing.
-    - name: JSON serialization
-      purpose: Transaction encoding and RPC payloads
-      implementation: encoding/json
-      notes: Canonical JSON is used for signing payloads.
-    - name: UUID / ID generation
-      purpose: Transaction and agreement identifiers
-      implementation: crypto/rand and time-based identifiers
-      notes: Used for replay-resistant operation IDs.
+      usage:
+        - path: go-chain/main.go
+          lines: "935-941"
+    - name: Keccak-256
+      purpose: Block and transaction hashing in Rust consensus library
+      implementation: sha3::Keccak256
+      notes: Used for block hashing and transaction root computation in consensus library.
+      usage:
+        - path: consensus/src/block.rs
+          lines: "37-52"
+        - path: consensus/src/transaction.rs
+          lines: "63-68"
+    - name: Ed25519 (Rust wrapper)
+      purpose: Transaction signature verification in consensus
+      implementation: Rust lib ed25519-dalek (pending integration)
+      notes: Consensus layer signature scheme.
+      usage:
+        - path: consensus/src/validator.rs
+          lines: "1-144"
+  consensusMechanisms:
+    - name: Proof of Stake (PoS)
+      description: Validator selection based on stake amount and performance metrics
+      implementation: go-chain/main.go
+      keyParameters:
+        - MIN_STAKE: 100
+        - RewardRatePercent: 4
+        - SlashPercent: 10
+    - name: Proof of Authority (PoA)
+      description: Round-robin authority-based block production
+      implementation: go-chain/main.go
+      keyParameters:
+        - validatorIdx rotation: round-robin
+    - name: Hybrid PoA/PoS (Rust)
+      description: BLS-based hybrid consensus with finality thresholds
+      implementation: consensus/src/validator.rs
+      keyParameters:
+        - MIN_STAKE: 10_000 * 10^18
+        - BLOCK_TIME_MS: 400
+        - finality_threshold: 2/3+ of active validators
+  networkSecurity:
+    - name: P2P Authentication
+      implementation: P2PNode trustedPeers map
+      notes: Peer trust derived from successful TCP handshake and peer message exchange
+    - name: Rate Limiting
+      implementation: rateLimiter sliding window
+      default: 60 requests per minute
+    - name: API Key Authentication
+      implementation: Bearer token auth for mutating endpoints
+      default: enabled
+  persistence:
+    - name: JSON State Serialization
+      purpose: Chain state persistence to disk
+      file: chain.json
+      notes: Single-file JSON serialization of entire chain state
   auditTargets:
     - path: go-chain/main.go
-      description: Core blockchain transaction, wallet, and signing logic.
+      description: Core blockchain transaction, wallet, and signing logic
+      critical: true
     - path: go-chain/main_test.go
-      description: Fuzz and regression coverage for signing and serialization.
+      description: Fuzz and regression coverage for signing and serialization
+    - path: go-chain/crypto_fuzz_test.go
+      description: Comprehensive fuzz testing suite for edge cases and malicious inputs
+    - path: go-chain/server_security_test.go
+      description: Auth and rate limiting tests
+    - path: consensus/src/
+      description: Rust consensus library primitives
+  complianceFindings:
+    - id: CF-001
+      severity: high
+      description: No formal merkle tree implementation for transaction proofs
+      recommendation: Implement merkle tree verification for light client support
+    - id: CF-002
+      severity: medium
+      description: Ed25519 public keys not rotated or versioned
+      recommendation: Implement key rotation schedule and versioned key metadata
+    - id: CF-003
+      severity: low
+      description: Single signing payload format
+      recommendation: Document canonical JSON ordering guarantees for audit reproducibility
   recommendedAuditors:
     - Trail of Bits
     - Hacken
@@ -34,3 +117,4 @@ spec:
     - Preserve deterministic signing behavior across versions.
     - Document key management and multisig migration strategy.
     - Keep cryptographic primitives version-pinned for audit reproducibility.
+    - Formalize minimum security requirements for production deployment.

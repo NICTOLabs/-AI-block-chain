@@ -1,6 +1,6 @@
 {
   "chain_id": "tdr-mainnet-1",
-  "genesis_time": "2026-09-01T00:00:00Z",
+  "genesis_time": 1784762621,
   "consensus": "hybrid-pos-poa",
   "initial_supply": 4500000000,
   "max_supply": 10000000000,
@@ -11,45 +11,163 @@
   },
   "allocations": [
     {
-      "address": "tdr1teamvesting...",
+      "address": "4dd038749b49255569d56b79eb4e67c6bc08b4e79f92f9a4095d671de67df072",
+      "public_key": "215e8f47d9c0e9c68ea4b3bd1bd9491ec7d94024317ce6d28728391d90c2f775",
       "amount": 675000000,
-      "description": "Team and advisors - 4-year vesting",
-      "lockup_months": 12
+      "description": "Team and advisors",
+      "lockup_until": 1910993021,
+      "vesting": "linear_4_years"
     },
     {
-      "address": "tdr1community...",
+      "address": "0e83597144c81b18d64436810debf01bda44bc48150ac12d541a0c6415cd5b70",
+      "public_key": "a9bbe4528772e7fc8f31c334c4fd6046b0ce887fc77f4f27345ab64a459007b7",
       "amount": 1575000000,
-      "description": "Community and ecosystem fund"
+      "description": "Community and ecosystem",
+      "vesting": "linear_4_years"
     },
     {
-      "address": "tdr1treasury...",
+      "address": "6f8958dc5eedc81631ae3f631af01d49ae0683c714160881f0c56acbe5aefba6",
+      "public_key": "05bd7be8aebd65cd8680db20bc076731c133fda93564c8d3772c2063609b68c7",
       "amount": 900000000,
-      "description": "Treasury and operations"
+      "description": "Treasury and operations",
+      "vesting": "linear_4_years"
     },
     {
-      "address": "tdr1stakingrewards...",
+      "address": "5d8a7a87a70789cbeac2811289cf13cf3bab7f3f9b32ffafa0b2431bf77f7dbd",
+      "public_key": "9c4bf137e0baa61c21e55966aa7640a9a06745502f6ffcf538de07a523732b1b",
       "amount": 1125000000,
-      "description": "Staking rewards pool"
+      "description": "Staking rewards pool",
+      "vesting": "linear_4_years"
     },
     {
-      "address": "tdr1liquidity...",
+      "address": "cd9a36f0802c6edc51e54b58df5e6ac792afd580c3b2b5ea34a8ed07ca1f9119",
+      "public_key": "4322f85e80baef8751aa7e1605f83efe369caffa364b89f9921c06a8895ffdac",
       "amount": 225000000,
-      "description": "Liquidity and exchange listings"
+      "description": "Liquidity and exchange listings",
+      "vesting": "linear_4_years"
+    },
+    {
+      "address": "117a077314253364e73cc159c93c599f9e7fcb7bad1a2c49282f52fba9de605f",
+      "public_key": "d9c0174841a16eff9e2f75b82801850ca41c3151c6d7628ec69936b1cf3c6721",
+      "amount": 100000,
+      "description": "Genesis validator 1 stake",
+      "vesting": "none"
+    },
+    {
+      "address": "b79f768e8a8a8f551cb34a52f436bb39b9981131a7d19739b9596cb12e92427c",
+      "public_key": "78d21f8389f39f00fb3dd166437b763b4c4de5786e14a7ec13538eb2ca46a572",
+      "amount": 100000,
+      "description": "Genesis validator 2 stake",
+      "vesting": "none"
+    },
+    {
+      "address": "cfdf87896cd84870d81a335693d62c5c8b302be67db9d80313da0d852aa17691",
+      "public_key": "2a778d905d7fb925336bc91d63d69893c618c59efb553a1f664ab4ae9527d54b",
+      "amount": 100000,
+      "description": "Genesis validator 3 stake",
+      "vesting": "none"
+    },
+    {
+      "address": "710fcd6d9ba635ef6469a9e40dfbad955a56ec24f66bff8af1789828dd5b1b25",
+      "public_key": "66f634ee95912b2ee681511fbc284bf0ebe8800f2a1b28b6933623e7e2dbb001",
+      "amount": 100000,
+      "description": "Genesis validator 4 stake",
+      "vesting": "none"
+    },
+    {
+      "address": "3d5d63782e124b91ae7ebd5813340e23f1ca51ac2424573d63f06d1b29e6f1a3",
+      "public_key": "d5a0f0540cc4a3ff41cd2fbc36625849673830b4372adde57f29c9ee5eae628d",
+      "amount": 100000,
+      "description": "Genesis validator 5 stake",
+      "vesting": "none"
+    },
+    {
+      "address": "58a07e8d307c72e46b236d784b6225a5165739e820ed1ec4f36a920d5d240709",
+      "public_key": "42e88acbc94a2fa598bbebedc9ddbae792d911c37f70ec768c3c3455948270fd",
+      "amount": 100000,
+      "description": "Genesis validator 6 stake",
+      "vesting": "none"
+    },
+    {
+      "address": "e87249a19be2bfc851723b05f149efbbd2ce68fbcb60b4726491eb0ea2ae2e3a",
+      "public_key": "29ba5e5efcd56d29fbd05eec8917a6329ea07a7e83798da8becd7e655f0ddd96",
+      "amount": 100000,
+      "description": "Genesis validator 7 stake",
+      "vesting": "none"
     }
   ],
   "validators": [
     {
-      "address": "tdr1validator...",
+      "address": "117a077314253364e73cc159c93c599f9e7fcb7bad1a2c49282f52fba9de605f",
+      "public_key": "d9c0174841a16eff9e2f75b82801850ca41c3151c6d7628ec69936b1cf3c6721",
+      "stake": 100000,
+      "country": "AE",
+      "city": "Dubai",
+      "contact": "validator-1@tender.network"
+    },
+    {
+      "address": "b79f768e8a8a8f551cb34a52f436bb39b9981131a7d19739b9596cb12e92427c",
+      "public_key": "78d21f8389f39f00fb3dd166437b763b4c4de5786e14a7ec13538eb2ca46a572",
+      "stake": 100000,
+      "country": "DE",
+      "city": "Frankfurt",
+      "contact": "validator-2@tender.network"
+    },
+    {
+      "address": "cfdf87896cd84870d81a335693d62c5c8b302be67db9d80313da0d852aa17691",
+      "public_key": "2a778d905d7fb925336bc91d63d69893c618c59efb553a1f664ab4ae9527d54b",
       "stake": 100000,
       "country": "KE",
-      "region": "Nairobi"
+      "city": "Nairobi",
+      "contact": "validator-3@tender.network"
+    },
+    {
+      "address": "710fcd6d9ba635ef6469a9e40dfbad955a56ec24f66bff8af1789828dd5b1b25",
+      "public_key": "66f634ee95912b2ee681511fbc284bf0ebe8800f2a1b28b6933623e7e2dbb001",
+      "stake": 100000,
+      "country": "NG",
+      "city": "Lagos",
+      "contact": "validator-4@tender.network"
+    },
+    {
+      "address": "3d5d63782e124b91ae7ebd5813340e23f1ca51ac2424573d63f06d1b29e6f1a3",
+      "public_key": "d5a0f0540cc4a3ff41cd2fbc36625849673830b4372adde57f29c9ee5eae628d",
+      "stake": 100000,
+      "country": "SG",
+      "city": "Singapore",
+      "contact": "validator-5@tender.network"
+    },
+    {
+      "address": "58a07e8d307c72e46b236d784b6225a5165739e820ed1ec4f36a920d5d240709",
+      "public_key": "42e88acbc94a2fa598bbebedc9ddbae792d911c37f70ec768c3c3455948270fd",
+      "stake": 100000,
+      "country": "US",
+      "city": "New York",
+      "contact": "validator-6@tender.network"
+    },
+    {
+      "address": "e87249a19be2bfc851723b05f149efbbd2ce68fbcb60b4726491eb0ea2ae2e3a",
+      "public_key": "29ba5e5efcd56d29fbd05eec8917a6329ea07a7e83798da8becd7e655f0ddd96",
+      "stake": 100000,
+      "country": "ZA",
+      "city": "Cape Town",
+      "contact": "validator-7@tender.network"
     }
   ],
   "economics": {
     "base_gas_fee": 5,
     "burn_rate_percent": 1,
     "reward_rate_percent": 4,
+    "min_stake": 100,
+    "block_time_seconds": 5,
     "inflation_start_year": 2026,
     "inflation_decay_per_year": 0.15
+  },
+  "multisig": {
+    "threshold": 2,
+    "signers": [
+      "d9c0174841a16eff9e2f75b82801850ca41c3151c6d7628ec69936b1cf3c6721",
+      "78d21f8389f39f00fb3dd166437b763b4c4de5786e14a7ec13538eb2ca46a572"
+    ]
   }
 }

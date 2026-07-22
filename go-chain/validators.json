@@ -1,13 +1,99 @@
 {
   "network": "tdr-testnet",
+  "chain": "go-chain",
+  "version": "v1.0.0",
+  "description": "Distributed multi-country validator configuration for TDR testnet",
   "validators": [
     {
       "name": "validator-kenya-01",
-      "public_key": "REPLACE_ME",
+      "address": "REPLACE_WITH_ED25519_DERIVED_ADDRESS",
+      "public_key": "REPLACE_WITH_ED25519_PUBLIC_KEY",
+      "stake": 10000,
       "weight": 100,
       "country": "KE",
+      "country_name": "Kenya",
       "region": "Nairobi",
-      "status": "active"
+      "city": "Nairobi",
+      "ip_address": "REPLACE_WITH_PUBLIC_IP:3030",
+      "p2p_port": 3030,
+      "api_port": 8080,
+      "metrics_port": 9090,
+      "latency_ms": 0,
+      "uptime_sla": "99.90%",
+      "consensus": "pos",
+      "status": "active",
+      "joined_at": "2026-07-22T00:00:00Z",
+      "last_heartbeat_at": "2026-07-22T00:00:00Z",
+      "telemetry_endpoint": "https://telemetry.tender.network/api/v1/register",
+      "tags": ["testnet", "kencel", "africa"]
+    },
+    {
+      "name": "validator-singapore-01",
+      "address": "REPLACE_WITH_ED25519_DERIVED_ADDRESS",
+      "public_key": "REPLACE_WITH_ED25519_PUBLIC_KEY",
+      "stake": 10000,
+      "weight": 100,
+      "country": "SG",
+      "country_name": "Singapore",
+      "region": "Asia Pacific",
+      "city": "Singapore",
+      "ip_address": "REPLACE_WITH_PUBLIC_IP:3030",
+      "p2p_port": 3030,
+      "api_port": 8080,
+      "metrics_port": 9090,
+      "latency_ms": 0,
+      "uptime_sla": "99.90%",
+      "consensus": "pos",
+      "status": "active",
+      "joined_at": "2026-07-22T00:00:00Z",
+      "last_heartbeat_at": "2026-07-22T00:00:00Z",
+      "telemetry_endpoint": "https://telemetry.tender.network/api/v1/register",
+      "tags": ["testnet", "gravity", "asia"]
+    },
+    {
+      "name": "validator-germany-01",
+      "address": "REPLACE_WITH_ED25519_DERIVED_ADDRESS",
+      "public_key": "REPLACE_WITH_ED25519_PUBLIC_KEY",
+      "stake": 10000,
+      "weight": 100,
+      "country": "DE",
+      "country_name": "Germany",
+      "region": "Europe",
+      "city": "Frankfurt",
+      "ip_address": "REPLACE_WITH_PUBLIC_IP:3030",
+      "p2p_port": 3030,
+      "api_port": 8080,
+      "metrics_port": 9090,
+      "latency_ms": 0,
+      "uptime_sla": "99.95%",
+      "consensus": "pos",
+      "status": "active",
+      "joined_at": "2026-07-22T00:00:00Z",
+      "last_heartbeat_at": "2026-07-22T00:00:00Z",
+      "telemetry_endpoint": "https://telemetry.tender.network/api/v1/register",
+      "tags": ["testnet", "gravity", "europe"]
     }
-  ]
+  ],
+  "bootstrap_seeds": [
+    "REPLACE_WITH_PUBLIC_IP:3030"
+  ],
+  "consensus": {
+    "type": "hybrid",
+    "poa_authorities": [],
+    "pos_minimum_stake": 100,
+    "block_time_ms": 400,
+    "finality_threshold_ratio": 0.667
+  },
+  "network_parameters": {
+    "max_peers": 50,
+    "strict_p2p": true,
+    "heartbeat_interval_seconds": 30,
+    "telemetry_endpoint": "https://telemetry.tender.network/api/v1/register",
+    "peering_policy": "strict"
+  },
+  "geographic_distribution": {
+    "target_regions": ["Africa", "Europe", "Asia Pacific", "North America", "South America"],
+    "minimum_per_region": 3,
+    "notes": "Validators must distribute across continents for mainnet readiness"
+  }
 }

@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 )
@@ -138,7 +136,7 @@ func TestFuzzMempoolReplayProtection(t *testing.T) {
 	}
 	signed := wallet.Sign(tx)
 
-	bc := NewBlockchain(ProofOfStake, t.TempDir())
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 
 	bc.SubmitTransaction(signed)
 	bc.SubmitTransaction(signed)
@@ -151,7 +149,7 @@ func TestFuzzMempoolReplayProtection(t *testing.T) {
 func TestFuzzNumericOverflowAndUnderflow(t *testing.T) {
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	addr := hex.EncodeToString(pub)
-	bc := NewBlockchain(ProofOfStake, t.TempDir())
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	bc.AddAccount(addr, 1000, false)
 
 	if bc.Ledger[addr].Balance != 1000 {
@@ -176,7 +174,7 @@ func TestFuzzNumericOverflowAndUnderflow(t *testing.T) {
 
 func TestFuzzGovernanceInjection(t *testing.T) {
 	for i := 0; i < 50; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir())
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 		from := randomAddress(int64(i))
 		to := randomAddress(int64(i + 1000))
 		bc.AddAccount(from, 5000, false)
@@ -203,7 +201,7 @@ func TestFuzzGovernanceInjection(t *testing.T) {
 
 func TestFuzzChainValidationWithCorruptedBlocks(t *testing.T) {
 	for i := 0; i < 50; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir())
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 
 		for j := 0; j < 3; j++ {
 			pub, _, _ := ed25519.GenerateKey(rand.Reader)
@@ -241,7 +239,7 @@ func TestFuzzChainValidationWithCorruptedBlocks(t *testing.T) {
 
 func TestFuzzEscrowAndGovernanceBoundaries(t *testing.T) {
 	for i := 0; i < 100; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir())
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 		from := randomAddress(int64(i))
 		to := randomAddress(int64(i + 1000))
 		bc.AddAccount(from, 5000, false)

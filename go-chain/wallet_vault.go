@@ -8,24 +8,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"os"
 	"sync"
 	"time"
 )
-
-type ManagedWallet struct {
-	ID        string `json:"id"`
-	Address   string `json:"address"`
-	PublicKey string `json:"public_key"`
-	Label     string `json:"label"`
-	IsAgent   bool   `json:"is_agent"`
-}
-
-type WalletVault struct {
-	mu      sync.RWMutex
-	wallets map[string]*WalletRecord
-}
 
 type WalletRecord struct {
 	Wallet
@@ -35,6 +21,11 @@ type WalletRecord struct {
 	CreatedAt  time.Time `json:"created_at"`
 	LastUsed   time.Time `json:"last_used"`
 	Archived   bool      `json:"archived"`
+}
+
+type WalletVault struct {
+	mu      sync.RWMutex
+	wallets map[string]*WalletRecord
 }
 
 func NewWalletVault() *WalletVault {

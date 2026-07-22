@@ -991,14 +991,6 @@ func (bc *Blockchain) snapshot() nodeState {
 	}
 }
 
-func calculateHash(block Block) string {
-	clone := block
-	clone.BlockHash = ""
-	data, _ := json.Marshal(clone)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
 func verifyTransaction(tx Transaction) bool {
 	if tx.ChainID == "" {
 		return false
@@ -1155,6 +1147,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	})
+	mux.Handle("/", http.FileServer(http.Dir("./web")))
 	mux.HandleFunc("/api/chain", func(w http.ResponseWriter, r *http.Request) {
 		if !cb.Allow() {
 			http.Error(w, "circuit breaker open", http.StatusServiceUnavailable)
@@ -1725,40 +1718,32 @@ func (m *serverMetrics) recordRequest(ok bool) {
 	m.mu.Unlock()
 }
 
-func (bc *Blockchain) validateTransaction(tx Transaction) bool {
-	if tx.ChainID != bc.ChainID {
-		return false
+func (bc *Blockchain) validateBlock(block Block, prev Block) error {
+	if block.Index != prev.Index+1 {
+		return fmt.Errorf("invalid index")
 	}
-	if !verifyTransaction(tx) {
-		return false
+	if block.PreviousHash != prev.BlockHash {
+		return fmt.Errorf("invalid previous hash")
 	}
-	if bc.isReplay(tx) {
-		return false
+	if block.BlockHash == "" {
+		return fmt.Errorf("missing block hash")
 	}
-	sender, ok := bc.Ledger[tx.From]
-	if !ok {
-		return false
+	if calculateHash(block) != block.BlockHash {
+		return fmt.Errorf("invalid block hash")
 	}
-	if tx.From != tx.To && tx.Amount == 0 {
-		return false
+	seen := make(map[string]struct{})
+	for _, tx := range block.Transactions {
+		if tx.ID == "" {
+			return fmt.Errorf("missing transaction id")
+		}
+		if _, exists := seen[tx.ID]; exists {
+			return fmt.Errorf("duplicate transaction")
+		}
+		seen[tx.ID] = struct{}{}
+		if !bc.validateTransaction(tx) {
+			return fmt.Errorf("invalid transaction")
+		}
 	}
-	if time.Now().Unix()-tx.Timestamp > 300 {
-		return false
-	}
-	switch tx.TxType {
-	case Transfer:
-		_, receiverExists := bc.Ledger[tx.To]
-		return receiverExists && sender.Balance >= tx.Amount
-	case RegisterModel:
-		_, exists := bc.Registry[tx.To]
-		return sender.IsAgent && !exists
-	case UpdateModel:
-		entry, exists := bc.Registry[tx.To]
-		return exists && entry.Owner == tx.From
-	case PurchaseApiKey:
-		entry, exists := bc.Registry[tx.To]
-		return exists && sender.Balance >= tx.Amount && entry.Active
-	default:
-		return false
-	}
+	return nil
 }
+

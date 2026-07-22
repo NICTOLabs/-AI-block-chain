@@ -73,8 +73,7 @@ func main() {
 	liquidityPct := flag.Float64("liquidity-pct", 0.05, "Liquidity allocation percentage")
 	flag.Parse()
 
-	total := float64(*initialSupply)
-	pctTotal := teamPct + communityPct + treasuryPct + stakingPct + liquidityPct
+	pctTotal := *teamPct + *communityPct + *treasuryPct + *stakingPct + *liquidityPct
 	if pctTotal != 1.0 {
 		panic(fmt.Sprintf("allocation percentages must sum to 1.0, got %.2f", pctTotal))
 	}
@@ -110,18 +109,12 @@ func main() {
 		{"Liquidity and exchange listings", *liquidityPct, false},
 	}
 
-	var teamAddr string
-	var teamPub string
 	for _, alloc := range allocations {
 		key, err := generateKeyPair()
 		if err != nil {
 			panic(err)
 		}
 		amount := uint64(float64(*initialSupply) * alloc.pct)
-		if alloc.desc == "Team and advisors" {
-			teamAddr = key.address
-			teamPub = key.publicKey
-		}
 		entry := GenesisAllocation{
 			Address:     key.address,
 			PublicKey:   key.publicKey,
