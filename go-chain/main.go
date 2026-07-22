@@ -131,6 +131,22 @@ type AuditEntry struct {
 	Details   string `json:"details"`
 }
 
+type ManagedWallet struct {
+	ID        string `json:"id"`
+	Address   string `json:"address"`
+	PublicKey string `json:"public_key"`
+	Label     string `json:"label"`
+	IsAgent   bool   `json:"is_agent"`
+}
+
+type Validator struct {
+	Address     string `json:"address"`
+	Stake       uint64 `json:"stake"`
+	Active      bool   `json:"active"`
+	JoinedAt    int64  `json:"joined_at"`
+	Performance uint64 `json:"performance"`
+}
+
 type Blockchain struct {
 	mu           sync.RWMutex
 	Chain        []Block
@@ -149,6 +165,8 @@ type Blockchain struct {
 	UsedNonces   map[string]map[uint64]struct{}
 	SeenTxIDs    map[string]struct{}
 	AuditTrail   []AuditEntry
+	Wallets      map[string]ManagedWallet
+	Validators   map[string]Validator
 }
 
 type P2PNode struct {
@@ -262,6 +280,8 @@ func NewBlockchain(consensus ConsensusType, dataDir string) *Blockchain {
 		UsedNonces:  make(map[string]map[uint64]struct{}),
 		SeenTxIDs:   make(map[string]struct{}),
 		AuditTrail:  []AuditEntry{},
+		Wallets:     make(map[string]ManagedWallet),
+		Validators:  make(map[string]Validator),
 	}
 	bc.createGenesisBlock()
 	_ = os.MkdirAll(dataDir, 0o755)
@@ -333,6 +353,7 @@ func (bc *Blockchain) loadFromDisk() error {
 	bc.UsedNonces = state.UsedNonces
 	bc.SeenTxIDs = state.SeenTxIDs
 	bc.AuditTrail = state.AuditTrail
+	bc.Wallets = make(map[string]ManagedWallet)
 	if bc.UsedNonces == nil {
 		bc.UsedNonces = make(map[string]map[uint64]struct{})
 	}
@@ -366,6 +387,18 @@ func (bc *Blockchain) AddAccount(address string, balance uint64, isAgent bool) {
 	defer bc.mu.Unlock()
 	bc.Ledger[address] = &Account{Address: address, Balance: balance, Staked: 0, IsAgent: isAgent}
 	bc.appendAuditEntry("account_created", address, fmt.Sprintf("balance=%d agent=%t", balance, isAgent))
+}
+
+func (bc *Blockchain) CreateManagedWallet(label string, isAgent bool) (ManagedWallet, error) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	wallet := NewWallet()
+	address := wallet.Address()
+	bc.AddAccount(address, 1000, isAgent)
+	managed := ManagedWallet{ID: fmt.Sprintf("wallet-%d", time.Now().UnixNano()), Address: address, PublicKey: hex.EncodeToString(wallet.PublicKey), Label: label, IsAgent: isAgent}
+	bc.Wallets[managed.ID] = managed
+	bc.appendAuditEntry("wallet_created", address, fmt.Sprintf("label=%s agent=%t", label, isAgent))
+	return managed, nil
 }
 
 func (bc *Blockchain) Stake(address string, amount uint64) {
@@ -472,6 +505,20 @@ func (bc *Blockchain) AddAuthority(address string) {
 	bc.Authorities = append(bc.Authorities, address)
 }
 
+func (bc *Blockchain) RegisterValidator(address string, stake uint64) error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	account := bc.Ledger[address]
+	if account == nil || account.Balance < stake {
+		return fmt.Errorf("insufficient funds")
+	}
+	account.Balance -= stake
+	account.Staked += stake
+	bc.Validators[address] = Validator{Address: address, Stake: stake, Active: true, JoinedAt: time.Now().Unix(), Performance: 100}
+	bc.appendAuditEntry("validator_registered", address, fmt.Sprintf("stake=%d", stake))
+	return nil
+}
+
 func (bc *Blockchain) SubmitTransaction(tx Transaction) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
@@ -564,9 +611,16 @@ func (bc *Blockchain) selectValidator() string {
 		return bc.Authorities[bc.validatorIdx]
 	}
 	var candidates []string
-	for address, account := range bc.Ledger {
-		if account.Staked > 0 {
+	for address, validator := range bc.Validators {
+		if validator.Active && validator.Stake > 0 {
 			candidates = append(candidates, address)
+		}
+	}
+	if len(candidates) == 0 {
+		for address, account := range bc.Ledger {
+			if account.Staked > 0 {
+				candidates = append(candidates, address)
+			}
 		}
 	}
 	if len(candidates) == 0 {
@@ -578,12 +632,15 @@ func (bc *Blockchain) selectValidator() string {
 		return "validator"
 	}
 	sort.Slice(candidates, func(i, j int) bool {
-		left := bc.Ledger[candidates[i]]
-		right := bc.Ledger[candidates[j]]
-		if left.Staked == right.Staked {
-			return candidates[i] < candidates[j]
+		left := bc.Validators[candidates[i]]
+		right := bc.Validators[candidates[j]]
+		if left.Stake == right.Stake {
+			if left.Performance == right.Performance {
+				return candidates[i] < candidates[j]
+			}
+			return left.Performance > right.Performance
 		}
-		return left.Staked > right.Staked
+		return left.Stake > right.Stake
 	})
 	bc.validatorIdx = (bc.validatorIdx + 1) % len(candidates)
 	return candidates[bc.validatorIdx]
@@ -1012,6 +1069,37 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			"consensus":      consensusName(chain.Consensus),
 			"authorities":    chain.Authorities,
 			"next_validator": chain.selectValidator(),
+			"validators":     chain.Validators,
+		})
+	})
+	mux.HandleFunc("/api/validators/register", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Address string `json:"address"`
+			Stake   uint64 `json:"stake"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := chain.RegisterValidator(payload.Address, payload.Stake); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = chain.saveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "registered"})
+	})
+	mux.HandleFunc("/api/bootstrap", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"node":      p2p.addr,
+			"peers":     p2p.peers,
+			"trusted":   p2p.trustedPeers,
+			"validator": chain.selectValidator(),
 		})
 	})
 	mux.HandleFunc("/api/registry", func(w http.ResponseWriter, r *http.Request) {
@@ -1051,6 +1139,28 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		_ = chain.saveToDisk()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": address, "public_key": hex.EncodeToString(wallet.PublicKey)})
+	})
+	mux.HandleFunc("/api/managed-wallets", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Label   string `json:"label"`
+			IsAgent bool   `json:"is_agent"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		wallet, err := chain.CreateManagedWallet(payload.Label, payload.IsAgent)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = chain.saveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(wallet)
 	})
 	mux.HandleFunc("/api/transfer", func(w http.ResponseWriter, r *http.Request) {
 		if err := requireAuth(r, cfg); err != nil {
