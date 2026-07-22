@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.16)
+project(ai_block_chain_cpp)
+set(CMAKE_CXX_STANDARD 20)
+find_package(OpenSSL REQUIRED)
+add_executable(ai_block_chain_cpp src/main.cpp)
+target_link_libraries(ai_block_chain_cpp PRIVATE OpenSSL::Crypto)

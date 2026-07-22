@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Chain Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; background: #07111f; color: #f5f7fb; }
+    .card { background: #12233d; padding: 1rem; border-radius: 10px; margin: 1rem 0; }
+    button { background: #2dbd8a; color: white; border: none; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; }
+    pre { white-space: pre-wrap; background: #0b1628; padding: 0.8rem; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>AI Chain Dashboard</h1>
+  <div class="card">
+    <button onclick="loadData()">Refresh</button>
+    <button onclick="mineBlock()">Mine block</button>
+  </div>
+  <div class="card">
+    <h2>Chain status</h2>
+    <pre id="chain">Loading...</pre>
+  </div>
+  <div class="card">
+    <h2>Registry</h2>
+    <pre id="registry">Loading...</pre>
+  </div>
+  <script>
+    async function loadData() {
+      const chainRes = await fetch('/api/chain');
+      const chain = await chainRes.json();
+      document.getElementById('chain').textContent = JSON.stringify(chain, null, 2);
+      const registryRes = await fetch('/api/registry');
+      const registry = await registryRes.json();
+      document.getElementById('registry').textContent = JSON.stringify(registry, null, 2);
+    }
+    async function mineBlock() {
+      await fetch('/api/mine', { method: 'POST' });
+      await loadData();
+    }
+    loadData();
+  </script>
+</body>
+</html>
