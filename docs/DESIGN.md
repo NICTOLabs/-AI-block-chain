@@ -62,10 +62,35 @@ Each starter node includes:
 - AI agent wallet and registry primitives
 - a command-line starter node demonstration
 
+## Current Status
+
+The following roadmap items are now implemented in the prototype:
+
+1. Cryptographic key generation and signature verification are present in the Rust, Go, and C++ implementations.
+2. Block validation and transaction processing are implemented in the chain logic, with a simple pending transaction pool and mining flow.
+3. Basic peer-to-peer networking and block propagation are implemented in the Go node.
+4. A lightweight web dashboard and HTTP API service are available for basic interaction.
+5. On-chain model registry state and agent-driven registry actions are implemented as first-class transaction types.
+
 ## Next Development Phases
 
-1. Add cryptographic key generation and signature verification
-2. Implement block validation, mempool, and transaction fees
-3. Add network discovery and peer-to-peer gossip
-4. Build a front-end or API service for human and agent interaction
-5. Add AI-specific smart contracts or on-chain state machines for model registry
+1. Add a real mempool with fee bidding, prioritization, and replacement rules.
+2. Introduce formal block validation rules, replay protection, and chain reorg handling.
+3. Expand peer discovery with bootstrap nodes, handshake messages, and gossip propagation.
+4. Add richer API and dashboard workflows for wallet creation, transfers, staking, and model registry management.
+5. Introduce AI-specific smart contracts or state-machine modules for service agreements, SLA enforcement, and usage metering.
+
+## Currency and Token Improvements
+
+To make the currency feel more useful and economically robust, the following improvements are recommended:
+
+- Introduce token sinks and sinks for compute usage, such as burning a small percentage of every inference payment.
+- Add staking rewards and slashing so validators earn yield while misbehavior is penalized.
+- Implement transaction fees that are dynamic based on network congestion and model complexity.
+- Support stablecoin-like collateral or escrow for high-value AI services while keeping the base token as the settlement layer.
+- Add programmable gas pricing for inference, storage, and agent-to-agent messaging so the token reflects real resource costs.
+- Create a deflationary or rebasing mechanism for scarcity, but keep it predictable and transparent.
+- Make the token usable for both settlement and governance, so holders can vote on registry policy, validator sets, and fee rules.
+- Introduce reputation-weighted staking so agents with strong uptime and verified performance can earn better validator opportunities.
+
+These changes would make the currency more than a simple demo token and turn it into a practical utility layer for AI services.
