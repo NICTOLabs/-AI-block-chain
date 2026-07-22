@@ -162,6 +162,29 @@ type P2PNode struct {
 	strictMode   bool
 }
 
+type serverConfig struct {
+	APIKey      string
+	EnableAuth  bool
+	RateLimit   int
+	RateWindow  time.Duration
+	EnableTLS   bool
+	MetricsPath string
+}
+
+type rateLimiter struct {
+	mu     sync.Mutex
+	counts map[string][]time.Time
+	limit  int
+	window time.Duration
+}
+
+type serverMetrics struct {
+	mu            sync.Mutex
+	requestCount  int64
+	errorCount    int64
+	lastRequestAt time.Time
+}
+
 type NodeInfo struct {
 	Address string   `json:"address"`
 	Peers   []string `json:"peers"`
@@ -850,6 +873,9 @@ func main() {
 	dataDir := flag.String("data-dir", "./data", "Directory to persist blockchain state")
 	consensus := flag.String("consensus", "pos", "Consensus type: pos or poa")
 	strictP2P := flag.Bool("strict-p2p", true, "Reject untrusted or duplicate peers")
+	apiKey := flag.String("api-key", "change-me-in-production", "API key required for protected endpoints")
+	enableAuth := flag.Bool("enable-auth", true, "Require API key auth for mutating endpoints")
+	rateLimit := flag.Int("rate-limit", 60, "Requests per minute per client")
 	flag.Parse()
 
 	var chainConsensus ConsensusType
@@ -876,20 +902,32 @@ func main() {
 
 	go p2p.start()
 	go p2p.connectToPeers()
-	go startAPI(chain, *apiPort, p2p)
+	cfg := serverConfig{APIKey: *apiKey, EnableAuth: *enableAuth, RateLimit: *rateLimit, RateWindow: time.Minute, EnableTLS: false, MetricsPath: "/metrics"}
+	go startAPI(chain, *apiPort, p2p, cfg)
 
 	fmt.Printf("AI blockchain node running on http://127.0.0.1:%d\n", *apiPort)
 	fmt.Printf("P2P listener on %s\n", p2p.addr)
 	<-p2p.shutdown
 }
 
-func startAPI(chain *Blockchain, port int, p2p *P2PNode) {
+func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
+	metrics := &serverMetrics{}
+	limiter := newRateLimiter(cfg.RateLimit, cfg.RateWindow)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	})
 	mux.HandleFunc("/api/chain", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if !limiter.allow(r.RemoteAddr) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		metrics.recordRequest(true)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(chain.snapshot())
 	})
@@ -900,6 +938,14 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode) {
 		_ = json.NewEncoder(w).Encode(chain.AuditTrail)
 	})
 	mux.HandleFunc("/api/monitoring", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if !limiter.allow(r.RemoteAddr) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		chain.mu.RLock()
 		defer chain.mu.RUnlock()
@@ -921,6 +967,14 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode) {
 		_ = json.NewEncoder(w).Encode(chain.Pending)
 	})
 	mux.HandleFunc("/api/transactions", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if !limiter.allow(r.RemoteAddr) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -994,6 +1048,14 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": address, "public_key": hex.EncodeToString(wallet.PublicKey)})
 	})
 	mux.HandleFunc("/api/transfer", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if !limiter.allow(r.RemoteAddr) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -1109,6 +1171,14 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode) {
 		_ = chain.saveToDisk()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(meter)
+	})
+	mux.HandleFunc(cfg.MetricsPath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"requests":        metrics.requestCount,
+			"errors":          metrics.errorCount,
+			"last_request_at": metrics.lastRequestAt.Format(time.RFC3339),
+		})
 	})
 	mux.Handle("/", http.FileServer(http.Dir("./web")))
 	log.Printf("API server listening on :%d", port)
@@ -1238,4 +1308,65 @@ func (p2p *P2PNode) writeMessage(conn net.Conn, msg p2pMessage) error {
 	}
 	_, err = conn.Write(append(payload, '\n'))
 	return err
+}
+
+func requireAuth(r *http.Request, cfg serverConfig) error {
+	if !cfg.EnableAuth {
+		return nil
+	}
+	if cfg.APIKey == "" {
+		return fmt.Errorf("missing api key")
+	}
+	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+	if authorization == "" {
+		return fmt.Errorf("missing authorization")
+	}
+	prefix := "Bearer "
+	if !strings.HasPrefix(authorization, prefix) {
+		return fmt.Errorf("invalid authorization scheme")
+	}
+	provided := strings.TrimPrefix(authorization, prefix)
+	if provided != cfg.APIKey {
+		return fmt.Errorf("invalid api key")
+	}
+	return nil
+}
+
+func newRateLimiter(limit int, window time.Duration) *rateLimiter {
+	if limit <= 0 {
+		limit = 60
+	}
+	if window <= 0 {
+		window = time.Minute
+	}
+	return &rateLimiter{counts: make(map[string][]time.Time), limit: limit, window: window}
+}
+
+func (rl *rateLimiter) allow(key string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	entries := rl.counts[key]
+	filtered := entries[:0]
+	for _, ts := range entries {
+		if now.Sub(ts) <= rl.window {
+			filtered = append(filtered, ts)
+		}
+	}
+	rl.counts[key] = filtered
+	if len(filtered) >= rl.limit {
+		return false
+	}
+	rl.counts[key] = append(filtered, now)
+	return true
+}
+
+func (m *serverMetrics) recordRequest(ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requestCount++
+	if !ok {
+		m.errorCount++
+	}
+	m.lastRequestAt = time.Now()
 }

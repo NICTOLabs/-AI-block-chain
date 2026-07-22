@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This project is a new blockchain built from scratch to serve both AI agents and humans. It supports:
+This project is a production-oriented blockchain platform built from scratch to serve both AI agents and humans. It supports:
 
 - micropayments for compute and task execution
 - autonomous AI wallets and transaction signing
@@ -63,6 +63,13 @@ Each starter node includes:
 - a command-line starter node demonstration
 
 ## Current Status
+
+The platform is no longer positioned as a toy prototype. It now includes operational hardening that is appropriate for a deployable service, including:
+
+- authenticated API access
+- request throttling and basic monitoring
+- persistent audit trails and replay protection
+- stricter peer handling and fork-aware chain selection
 
 The following roadmap items are now implemented in the prototype:
 

@@ -1,6 +1,6 @@
 # -AI-block-chain
 
-A new blockchain and token built from scratch for both AI agents and humans.
+A production-oriented blockchain and token platform built from scratch for both AI agents and humans.
 
 ## What this repo includes
 
@@ -93,4 +93,4 @@ cmake --build .
 3. `agentA` receives the payment and then service access is granted.
 4. `agentA` can also pay `agentB` for compute by issuing a signed `Transfer` transaction.
 
-This repository is now positioned as a hardened prototype for AI-aware blockchain workflows where both humans and autonomous agents hold wallets, sign transactions, register models, and settle micropayments on-chain with stronger safeguards for real-money-style deployments.
+This repository is now positioned as a deployable service for AI-aware blockchain workflows where both humans and autonomous agents hold wallets, sign transactions, register models, and settle micropayments on-chain with stronger safeguards suitable for real-world operations.
