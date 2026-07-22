@@ -215,6 +215,15 @@ type rateLimiter struct {
 	window time.Duration
 }
 
+type circuitBreaker struct {
+	mu            sync.Mutex
+	failures     int64
+	threshold    int64
+	window       time.Duration
+	lastFailure  time.Time
+	state        string
+}
+
 type serverMetrics struct {
 	mu            sync.Mutex
 	requestCount  int64
@@ -1140,20 +1149,28 @@ func main() {
 func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 	metrics := chain.ensureMetrics()
 	limiter := newRateLimiter(cfg.RateLimit, cfg.RateWindow)
+	cb := newCircuitBreaker(5, 10*time.Second)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	})
 	mux.HandleFunc("/api/chain", func(w http.ResponseWriter, r *http.Request) {
+		if !cb.Allow() {
+			http.Error(w, "circuit breaker open", http.StatusServiceUnavailable)
+			return
+		}
 		if err := requireAuth(r, cfg); err != nil {
+			cb.RecordFailure()
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
 		if !limiter.allow(r.RemoteAddr) {
+			cb.RecordFailure()
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
+		cb.RecordSuccess()
 		metrics.recordRequest(true)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(chain.snapshot())
@@ -1641,6 +1658,41 @@ func newRateLimiter(limit int, window time.Duration) *rateLimiter {
 	return &rateLimiter{counts: make(map[string][]time.Time), limit: limit, window: window}
 }
 
+func newCircuitBreaker(threshold int64, window time.Duration) *circuitBreaker {
+	return &circuitBreaker{threshold: threshold, window: window, state: "closed"}
+}
+
+func (cb *circuitBreaker) Allow() bool {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if cb.state == "open" {
+		if time.Since(cb.lastFailure) > cb.window {
+			cb.state = "half-open"
+			cb.failures = 0
+			return true
+		}
+		return false
+	}
+	return true
+}
+
+func (cb *circuitBreaker) RecordSuccess() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.failures = 0
+	cb.state = "closed"
+}
+
+func (cb *circuitBreaker) RecordFailure() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.failures++
+	cb.lastFailure = time.Now()
+	if cb.failures >= cb.threshold {
+		cb.state = "open"
+	}
+}
+
 func (rl *rateLimiter) allow(key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -1671,4 +1723,42 @@ func (m *serverMetrics) recordRequest(ok bool) {
 	m.mu.Lock()
 	m.lastRequestAt = time.Now()
 	m.mu.Unlock()
+}
+
+func (bc *Blockchain) validateTransaction(tx Transaction) bool {
+	if tx.ChainID != bc.ChainID {
+		return false
+	}
+	if !verifyTransaction(tx) {
+		return false
+	}
+	if bc.isReplay(tx) {
+		return false
+	}
+	sender, ok := bc.Ledger[tx.From]
+	if !ok {
+		return false
+	}
+	if tx.From != tx.To && tx.Amount == 0 {
+		return false
+	}
+	if time.Now().Unix()-tx.Timestamp > 300 {
+		return false
+	}
+	switch tx.TxType {
+	case Transfer:
+		_, receiverExists := bc.Ledger[tx.To]
+		return receiverExists && sender.Balance >= tx.Amount
+	case RegisterModel:
+		_, exists := bc.Registry[tx.To]
+		return sender.IsAgent && !exists
+	case UpdateModel:
+		entry, exists := bc.Registry[tx.To]
+		return exists && entry.Owner == tx.From
+	case PurchaseApiKey:
+		entry, exists := bc.Registry[tx.To]
+		return exists && sender.Balance >= tx.Amount && entry.Active
+	default:
+		return false
+	}
 }
