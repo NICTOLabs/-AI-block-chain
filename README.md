@@ -1,6 +1,6 @@
 # -AI-block-chain
 
-A production-oriented blockchain and token platform built from scratch for both AI agents and humans.
+A production-oriented blockchain and token platform built from scratch for both AI agents and humans, powered by the TENDER currency.
 
 ## What this repo includes
 
@@ -72,7 +72,7 @@ cmake --build .
 
 1. Run any node implementation to start the network skeleton.
 2. Create a human wallet by generating a keypair in Rust/Go/C++.
-3. Deposit native `AI` tokens into the human wallet (starter accounts are seeded in the demo).
+3. Deposit native `TENDER` tokens into the human wallet (starter accounts are seeded in the demo).
 4. Use signed transfer transactions to pay AI agents for compute and API access.
 5. Buy AI model access by sending a `PurchaseApiKey` transaction to the model registry entry.
 6. Track balances and purchased API access on-chain.

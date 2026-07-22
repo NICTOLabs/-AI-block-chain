@@ -83,6 +83,7 @@ const (
 	FeeMultiplier     uint64 = 2
 	BurnRatePercent   uint64 = 1
 	RewardRatePercent uint64 = 1
+	CurrencyName      string = "TENDER"
 )
 
 type Escrow struct {
@@ -865,6 +866,10 @@ func consensusName(consensus ConsensusType) string {
 	return "pos"
 }
 
+func currencySymbol() string {
+	return CurrencyName
+}
+
 func main() {
 	apiPort := flag.Int("api-port", 8080, "HTTP API port")
 	p2pPort := flag.Int("p2p-port", 3030, "P2P listen port")
@@ -905,7 +910,7 @@ func main() {
 	cfg := serverConfig{APIKey: *apiKey, EnableAuth: *enableAuth, RateLimit: *rateLimit, RateWindow: time.Minute, EnableTLS: false, MetricsPath: "/metrics"}
 	go startAPI(chain, *apiPort, p2p, cfg)
 
-	fmt.Printf("AI blockchain node running on http://127.0.0.1:%d\n", *apiPort)
+	fmt.Printf("%s blockchain node running on http://127.0.0.1:%d\n", CurrencyName, *apiPort)
 	fmt.Printf("P2P listener on %s\n", p2p.addr)
 	<-p2p.shutdown
 }
@@ -1075,6 +1080,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		chain.mu.RLock()
 		defer chain.mu.RUnlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{
+			"currency":            CurrencyName,
 			"token_supply":        chain.TokenSupply,
 			"burn_rate_percent":   BurnRatePercent,
 			"reward_rate_percent": RewardRatePercent,

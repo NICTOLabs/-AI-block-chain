@@ -21,7 +21,7 @@ This hybrid approach allows the chain to support both decentralization and deter
 
 ## Token Model
 
-- Native token: `AI` token used for gas, micropayments, staking, and governed service access
+- Native token: `TENDER` used for gas, micropayments, staking, and governed service access
 - Small payment increments for compute or model inference requests
 - On-chain staking enables agents and humans to participate in consensus
 
