@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -19,6 +20,16 @@ type GenesisAllocation struct {
 	Amount      uint64 `json:"amount"`
 	Description string `json:"description"`
 	LockupUntil int64  `json:"lockup_until,omitempty"`
+	Vesting     string `json:"vesting,omitempty"`
+}
+
+type ValidatorMeta struct {
+	Address string `json:"address"`
+	PublicKey string `json:"public_key"`
+	Stake   uint64 `json:"stake"`
+	Country string `json:"country"`
+	City    string `json:"city"`
+	Contact string `json:"contact,omitempty"`
 }
 
 type GenesisFile struct {
@@ -33,18 +44,20 @@ type GenesisFile struct {
 		Decimals int    `json:"decimals"`
 	} `json:"token"`
 	Allocations []GenesisAllocation `json:"allocations"`
-	Validators  []struct {
-		Address string `json:"address"`
-		Stake   uint64 `json:"stake"`
-		Country string `json:"country"`
-	} `json:"validators"`
+	Validators  []ValidatorMeta     `json:"validators"`
 	Economics struct {
 		BaseGasFee         uint64  `json:"base_gas_fee"`
 		BurnRatePercent    uint64  `json:"burn_rate_percent"`
 		RewardRatePercent  uint64  `json:"reward_rate_percent"`
 		MinStake           uint64  `json:"min_stake"`
 		BlockTimeSeconds   int     `json:"block_time_seconds"`
+		InflationStartYear int     `json:"inflation_start_year"`
+		InflationDecay     float64 `json:"inflation_decay_per_year"`
 	} `json:"economics"`
+	Multisig struct {
+		Threshold int      `json:"threshold"`
+		Signers   []string `json:"signers,omitempty"`
+	} `json:"multisig"`
 }
 
 func main() {
@@ -52,13 +65,19 @@ func main() {
 	chainID := flag.String("chain-id", "tdr-mainnet-1", "Chain ID")
 	initialSupply := flag.Uint64("initial-supply", 4500000000, "Initial token supply")
 	maxSupply := flag.Uint64("max-supply", 10000000000, "Maximum token supply")
-	teamAmount := flag.Uint64("team-amount", 675000000, "Team allocation")
-	communityAmount := flag.Uint64("community-amount", 1575000000, "Community allocation")
-	treasuryAmount := flag.Uint64("treasury-amount", 900000000, "Treasury allocation")
-	stakingAmount := flag.Uint64("staking-amount", 1125000000, "Staking rewards pool")
-	liquidityAmount := flag.Uint64("liquidity-amount", 225000000, "Liquidity allocation")
 	validatorCount := flag.Int("validator-count", 7, "Number of genesis validators")
+	teamPct := flag.Float64("team-pct", 0.15, "Team allocation percentage")
+	communityPct := flag.Float64("community-pct", 0.35, "Community allocation percentage")
+	treasuryPct := flag.Float64("treasury-pct", 0.20, "Treasury allocation percentage")
+	stakingPct := flag.Float64("staking-pct", 0.25, "Staking rewards percentage")
+	liquidityPct := flag.Float64("liquidity-pct", 0.05, "Liquidity allocation percentage")
 	flag.Parse()
+
+	total := float64(*initialSupply)
+	pctTotal := teamPct + communityPct + treasuryPct + stakingPct + liquidityPct
+	if pctTotal != 1.0 {
+		panic(fmt.Sprintf("allocation percentages must sum to 1.0, got %.2f", pctTotal))
+	}
 
 	genesis := GenesisFile{
 		ChainID:       *chainID,
@@ -75,67 +94,86 @@ func main() {
 	genesis.Economics.RewardRatePercent = 4
 	genesis.Economics.MinStake = 100
 	genesis.Economics.BlockTimeSeconds = 5
+	genesis.Economics.InflationStartYear = 2026
+	genesis.Economics.InflationDecay = 0.15
+	genesis.Multisig.Threshold = 2
 
-	vestingCliff := time.Now().AddDate(4, 0, 0).Unix()
-
-	teamKey, _ := generateKeyPair()
-	communityKey, _ := generateKeyPair()
-	treasuryKey, _ := generateKeyPair()
-	stakingKey, _ := generateKeyPair()
-	liquidityKey, _ := generateKeyPair()
-
-	genesis.Allocations = []GenesisAllocation{
-		{
-			Address:     teamKey.address,
-			PublicKey:   teamKey.publicKey,
-			Amount:      *teamAmount,
-			Description: "Team and advisors - 4-year vesting",
-			LockupUntil: vestingCliff,
-		},
-		{
-			Address:     communityKey.address,
-			PublicKey:   communityKey.publicKey,
-			Amount:      *communityAmount,
-			Description: "Community and ecosystem fund",
-		},
-		{
-			Address:     treasuryKey.address,
-			PublicKey:   treasuryKey.publicKey,
-			Amount:      *treasuryAmount,
-			Description: "Treasury and operations",
-		},
-		{
-			Address:     stakingKey.address,
-			PublicKey:   stakingKey.publicKey,
-			Amount:      *stakingAmount,
-			Description: "Staking rewards pool",
-		},
-		{
-			Address:     liquidityKey.address,
-			PublicKey:   liquidityKey.publicKey,
-			Amount:      *liquidityAmount,
-			Description: "Liquidity and exchange listings",
-		},
+	allocations := []struct {
+		desc string
+		pct  float64
+		lock bool
+	}{
+		{"Team and advisors", *teamPct, true},
+		{"Community and ecosystem", *communityPct, false},
+		{"Treasury and operations", *treasuryPct, false},
+		{"Staking rewards pool", *stakingPct, false},
+		{"Liquidity and exchange listings", *liquidityPct, false},
 	}
 
+	var teamAddr string
+	var teamPub string
+	for _, alloc := range allocations {
+		key, err := generateKeyPair()
+		if err != nil {
+			panic(err)
+		}
+		amount := uint64(float64(*initialSupply) * alloc.pct)
+		if alloc.desc == "Team and advisors" {
+			teamAddr = key.address
+			teamPub = key.publicKey
+		}
+		entry := GenesisAllocation{
+			Address:     key.address,
+			PublicKey:   key.publicKey,
+			Amount:      amount,
+			Description: alloc.desc,
+			Vesting:     "linear_4_years",
+		}
+		if alloc.lock {
+			entry.LockupUntil = time.Now().AddDate(4, 0, 0).Unix()
+		}
+		genesis.Allocations = append(genesis.Allocations, entry)
+	}
+
+	countries := []string{"KE", "SG", "DE", "NG", "ZA", "AE", "US"}
+	cities := map[string]string{
+		"KE": "Nairobi",
+		"SG": "Singapore",
+		"DE": "Frankfurt",
+		"NG": "Lagos",
+		"ZA": "Cape Town",
+		"AE": "Dubai",
+		"US": "New York",
+	}
+	sort.Slice(countries, func(i, j int) bool { return countries[i] < countries[j] })
+
 	for i := 0; i < *validatorCount; i++ {
-		key, _ := generateKeyPair()
-		stake := uint64(100000)
-		genesis.Validators = append(genesis.Validators, struct {
-			Address string `json:"address"`
-			Stake   uint64 `json:"stake"`
-			Country string `json:"country"`
-		}{
-			Address: key.address,
-			Stake:   stake,
-			Country: "KE",
+		key, err := generateKeyPair()
+		if err != nil {
+			panic(err)
+		}
+		country := countries[i%len(countries)]
+		genesis.Validators = append(genesis.Validators, ValidatorMeta{
+			Address:   key.address,
+			PublicKey: key.publicKey,
+			Stake:     100000,
+			Country:   country,
+			City:      cities[country],
+			Contact:   fmt.Sprintf("validator-%d@tender.network", i+1),
 		})
 		genesis.Allocations = append(genesis.Allocations, GenesisAllocation{
 			Address:     key.address,
 			PublicKey:   key.publicKey,
-			Amount:      stake,
+			Amount:      100000,
 			Description: fmt.Sprintf("Genesis validator %d stake", i+1),
+			Vesting:     "none",
 		})
+		if i < 2 {
+			genesis.Multisig.Signers = append(genesis.Multisig.Signers, key.publicKey)
+		}
+	}
+	if len(genesis.Multisig.Signers) == 0 && len(genesis.Validators) > 0 {
+		genesis.Multisig.Signers = append(genesis.Multisig.Signers, genesis.Validators[0].PublicKey)
 	}
 
 	data, err := json.MarshalIndent(genesis, "", "  ")
@@ -146,15 +184,20 @@ func main() {
 	if err := os.WriteFile(*output, data, 0o644); err != nil {
 		panic(err)
 	}
+	signature := sha256.Sum256(data)
+	_ = os.WriteFile(*output+".sha256", []byte(hex.EncodeToString(signature[:])+"  "+filepath.Base(*output)+"\n"), 0o644)
+
 	fmt.Printf("Genesis file written to %s\n", *output)
+	fmt.Printf("Genesis SHA256: %s\n", hex.EncodeToString(signature[:]))
 	fmt.Printf("Total supply: %d\n", genesis.InitialSupply)
 	fmt.Printf("Validators: %d\n", len(genesis.Validators))
 	fmt.Printf("Allocations: %d\n", len(genesis.Allocations))
+	fmt.Printf("Multisig threshold: %d/%d\n", genesis.Multisig.Threshold, len(genesis.Multisig.Signers))
 }
 
 type keyPair struct {
-	address  string
-	publicKey string
+	address    string
+	publicKey  string
 	privateKey string
 }
 

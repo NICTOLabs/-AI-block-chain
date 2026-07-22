@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  rosetta:
+    image: tender-node:latest
+    command: ["/root/tender-node", "--chain-id", "tdr-mainnet-1", "--rosetta-port", "8082"]
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./data:/root/data
+    environment:
+      - TENDER_ROSETTA_ENABLED=true
+      - TENDER_ROSETTA_PORT=8082
+      - TENDER_CHAIN_ID=tdr-mainnet-1
+    restart: unless-stopped
+
+  wtdr-bridge:
+    image: tender-bridge:latest
+    build:
+      context: .
+      dockerfile: ./go-chain/contracts/Dockerfile
+    ports:
+      - "8545:8545"
+    volumes:
+      - ./bridge-data:/root/bridge
+    environment:
+      - BRIDGE_MODE=watch
+      - SOURCE_CHAIN_ID=tdr-mainnet-1
+      - TARGET_CHAIN_ID=ethereum
+      - BRIDGE_PRIVATE_KEY=${BRIDGE_PRIVATE_KEY}
+    restart: unless-stopped
