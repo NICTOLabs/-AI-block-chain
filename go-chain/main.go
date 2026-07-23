@@ -319,7 +319,7 @@ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blo
 		Validators:  make(map[string]Validator),
 		ChainID:     chainID,
 		BlockTime:   time.Second * 5,
-		Difficulty:  0x2000,
+		Difficulty:  16,
 		metrics:     &serverMetrics{},
 	}
 	bc.createGenesisBlock()
@@ -814,12 +814,13 @@ func (bc *Blockchain) selectValidator() string {
 }
 
 func (bc *Blockchain) proofOfWork(block Block) Block {
-	target := uint64(1) << (64 - uint64(bc.Difficulty))
+	target := new(big.Int)
+	target.Lsh(big.NewInt(1), 256-uint(bc.Difficulty))
 	for {
 		hash := calculateHash(block)
 		hashVal := new(big.Int)
 		hashVal.SetString(hash, 16)
-		if hashVal.Cmp(new(big.Int).SetUint64(target)) < 0 {
+		if hashVal.Cmp(target) < 0 {
 			block.BlockHash = hash
 			return block
 		}
@@ -1558,10 +1559,9 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		_, _ = fmt.Fprintf(w, "# TYPE tender_tx_accepted_total counter\n")
 		_, _ = fmt.Fprintf(w, "tender_tx_accepted_total %d\n", atomic.LoadInt64(&metrics.txAccepted))
 		_, _ = fmt.Fprintf(w, "# HELP tender_tx_rejected_total Total rejected transactions\n")
-		_, _ = fmt.Fprintf(w, "# TYPE tender_tx_rejected_total counter\n")
-		_, _ = fmt.Fprintf(w, "tender_tx_rejected_total %d\n", atomic.LoadInt64(&metrics.txRejected))
+	_, _ = fmt.Fprintf(w, "# TYPE tender_tx_rejected_total counter\n")
+	_, _ = fmt.Fprintf(w, "tender_tx_rejected_total %d\n", atomic.LoadInt64(&metrics.txRejected))
 	})
-	mux.Handle("/", http.FileServer(http.Dir("./web")))
 	log.Printf("{\"event\":\"api_listen\",\"port\":%d}", port)
 	if err := http.ListenAndServe(":"+strconv.Itoa(port), mux); err != nil {
 		log.Fatal(err)

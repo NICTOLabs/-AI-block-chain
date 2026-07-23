@@ -2,31 +2,25 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"net/http"
 	"os"
 	"time"
 )
 
 type Miner struct {
-	apiURL     string
-	minerAddr  string
-	threads    int
-	hashrate   uint64
+	apiURL    string
+	minerAddr string
 }
 
-func NewMiner(apiURL, minerAddr string, threads int) *Miner {
-	return &Miner{apiURL: apiURL, minerAddr: minerAddr, threads: threads}
+func NewMiner(apiURL, minerAddr string) *Miner {
+	return &Miner{apiURL: apiURL, minerAddr: minerAddr}
 }
 
 func (m *Miner) Start() {
 	fmt.Printf("Miner started: %s\n", m.minerAddr)
 	fmt.Printf("API: %s\n", m.apiURL)
-	fmt.Printf("Threads: %d\n", m.threads)
 	for {
 		block, err := m.mineBlock()
 		if err != nil {
@@ -35,17 +29,19 @@ func (m *Miner) Start() {
 			continue
 		}
 		if block != nil {
+			idx := fmt.Sprint(block["index"])
+			hash := fmt.Sprint(block["block_hash"])
+			fmt.Printf("Block mined: index=%s hash=%s\n", idx, hash)
 			if err := m.submitBlock(block); err != nil {
 				fmt.Printf("submit error: %v\n", err)
-			} else {
-				fmt.Printf("Block mined: index=%d hash=%s\n", block.Index, block.BlockHash)
 			}
 		}
 	}
 }
 
-func (m *Miner) mineBlock() (*Block, error) {
-	resp, err := http.Get(m.apiURL + "/api/mine")
+func (m *Miner) mineBlock() (map[string]interface{}, error) {
+	payload, _ := json.Marshal(map[string]string{"miner_address": m.minerAddr})
+	resp, err := http.Post(m.apiURL+"/api/mine", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -53,14 +49,14 @@ func (m *Miner) mineBlock() (*Block, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("mine endpoint returned %d", resp.StatusCode)
 	}
-	var block Block
-	if err := json.NewDecoder(resp.Body).Decode(&block); err != nil {
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
-	return &block, nil
+	return result, nil
 }
 
-func (m *Miner) submitBlock(block *Block) error {
+func (m *Miner) submitBlock(block map[string]interface{}) error {
 	payload, _ := json.Marshal(block)
 	resp, err := http.Post(m.apiURL+"/api/miner/submit", "application/json", bytes.NewReader(payload))
 	if err != nil {
@@ -73,22 +69,6 @@ func (m *Miner) submitBlock(block *Block) error {
 	return nil
 }
 
-func CalculateHash(block Block) string {
-	clone := block
-	clone.BlockHash = ""
-	data, _ := json.Marshal(clone)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
-func HashMatchesTarget(hash string, difficulty uint32) bool {
-	target := big.NewInt(1)
-	target.Lsh(target, 256-uint(difficulty))
-	hashInt := new(big.Int)
-	hashInt.SetString(hash, 16)
-	return hashInt.Cmp(target) < 0
-}
-
 func main() {
 	apiURL := os.Getenv("TENDER_API_URL")
 	if apiURL == "" {
@@ -99,10 +79,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "TENDER_MINER_ADDRESS is required")
 		os.Exit(1)
 	}
-	threads := 1
-	if t := os.Getenv("TENDER_MINER_THREADS"); t != "" {
-		fmt.Sscanf(t, "%d", &threads)
-	}
-	miner := NewMiner(apiURL, minerAddr, threads)
+	miner := NewMiner(apiURL, minerAddr)
 	miner.Start()
 }
