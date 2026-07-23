@@ -19,6 +19,20 @@ The chain uses a hybrid consensus design:
 
 This hybrid approach allows the chain to support both decentralization and deterministic governance for AI agent identity and registry operations.
 
+## Currency Subunits
+
+The native token `TENDER` is expressed in satoshi-style subunits called `HOGOHOGO`:
+
+- 1 TENDER = 10,000,000 HOGOHOGO
+- On-chain amounts are stored as unsigned integers in HOGOHOGO
+- User-facing displays convert to `TENDER` and `HOGOHOGO` using the `FormatAmount` helper
+
+Example `FormatAmount` output:
+
+    FormatAmount(15000000) -> "1 TENDER 5000000 HOGOHOGO"
+
+This keeps fee math exact while keeping the UI readable.
+
 ## Token Model
 
 - Native token: `TENDER` used for gas, micropayments, staking, and governed service access

@@ -1,3 +1,50 @@
+/*
+CONCRETE IMPLEMENTATION PLAN
+
+1. Hogohogo constants
+   - Files: go-chain/main.go, go-chain/tokenomics.go
+   - Normalize hogohogo subunit display and fee math.
+
+2. Finality state
+   - Files: go-chain/main.go, go-chain/state_store.go
+   - Add finality tracking logic.
+
+3. Transaction merkle root and canonical signing bytes
+   - Files: go-chain/main.go, go-chain/state_store.go
+   - Add Merkle tree over block transactions, update BlockHash to include txMerkleRoot. Canonicalize signing bytes (fixed field order, omit zero-value omitempty).
+
+4. Ledger / tracker / fee calcs
+   - Files: go-chain/main.go, go-chain/tokenomics.go
+   - Refactor fee estimation and account balance tracking. Add fee tracker and congestion tracker.
+
+5. Test updates
+   - Files: go-chain/main_test.go, go-chain/tokenomics_test.go, go-chain/currency_identity_test.go, go-chain/server_security_test.go, go-chain/observability_test.go, go-chain/validator_network_test.go, go-chain/config_test.go, go-chain/crypto_fuzz_test.go, go-chain/wallet_management_test.go, go-chain/prod_readiness_test.go, go-chain/next_phase_test.go
+   - Update tests for new signing payload, merkle root, fee calc, finality.
+
+6. CLI faucet
+   - Files: go-chain/tools/faucet/main.go, go-chain/tools/faucet/server.go, go-chain/tools/faucet/go.mod
+   - Wire faucet into node config, add /api/faucet endpoint or CLI subcommand.
+
+7. Structured logging
+   - Files: go-chain/main.go
+   - Replace log.Printf with structured logger. Add request ID and log levels.
+
+8. CI
+   - Files: .github/workflows/ci.yml (new)
+   - Add lint, test, build matrix.
+
+9. OpenAPI
+   - Files: openapi.yaml (new)
+   - Document /api/* endpoints.
+
+10. Docs
+    - Files: docs/DESIGN.md, docs/launch_sequence.md, README.md
+    - Update with new architecture.
+
+11. Explorer
+    - Files: go-chain/web/index.html, go-chain/main.go
+    - Add /api/blocks/{height}, /api/tx/{id} endpoints and explorer UI improvements.
+*/
 package main
 
 import (
@@ -57,6 +104,7 @@ type Block struct {
 	Transactions []Transaction `json:"transactions"`
 	Nonce        uint64        `json:"nonce"`
 	BlockHash    string        `json:"block_hash"`
+	TxMerkleRoot string        `json:"tx_merkle_root,omitempty"`
 }
 
 type Account struct {
@@ -83,13 +131,15 @@ const (
 )
 
 const (
-	BaseFee           uint64 = 5
+	HogohogoPerTender = 10_000_000
+	BaseFee           uint64 = 5 * HogohogoPerTender
 	FeeMultiplier     uint64 = 2
 	BurnRatePercent   uint64 = 1
 	RewardRatePercent uint64 = 4
-	MinStake          uint64 = 100
+	MinStake          uint64 = 100 * HogohogoPerTender
 	SlashPercent      uint64 = 10
 	CurrencyName      string = "TENDER"
+	CurrencySubunit   string = "HOGOHOGO"
 )
 
 type Escrow struct {
@@ -178,6 +228,8 @@ type Blockchain struct {
 	ChainID      string
 	BlockTime    time.Duration
 	Difficulty   uint32
+	FinalizedBlocks map[uint64]struct{}
+	LastFinalized   uint64
 	metrics      *serverMetrics
 }
 
@@ -257,6 +309,8 @@ type nodeState struct {
 	SeenTxIDs   map[string]struct{}            `json:"seen_tx_ids"`
 	AuditTrail  []AuditEntry                   `json:"audit_trail"`
 	NextNonce   map[string]uint64              `json:"next_nonce"`
+	FinalizedBlocks map[uint64]struct{}        `json:"finalized_blocks"`
+	LastFinalized   uint64                      `json:"last_finalized"`
 }
 
 type p2pMessage struct {
@@ -321,6 +375,8 @@ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blo
 		BlockTime:   time.Second * 5,
 		Difficulty:  16,
 		metrics:     &serverMetrics{},
+		FinalizedBlocks: make(map[uint64]struct{}),
+		LastFinalized: 0,
 	}
 	bc.createGenesisBlock()
 	_ = os.MkdirAll(dataDir, 0o755)
@@ -354,21 +410,23 @@ func (bc *Blockchain) createGenesisBlock() {
 
 func (bc *Blockchain) saveToDisk() error {
 	state := nodeState{
-		Chain:       bc.Chain,
-		Pending:     bc.Pending,
-		Ledger:      bc.Ledger,
-		Registry:    bc.Registry,
-		Consensus:   consensusName(bc.Consensus),
-		Authorities: bc.Authorities,
-		TokenSupply: bc.TokenSupply,
-		Escrows:     bc.Escrows,
-		Proposals:   bc.Proposals,
-		Agreements:  bc.Agreements,
-		UsageMeters: bc.UsageMeters,
-		UsedNonces:  bc.UsedNonces,
-		SeenTxIDs:   bc.SeenTxIDs,
-		AuditTrail:  bc.AuditTrail,
-		NextNonce:   bc.NextNonce,
+		Chain:           bc.Chain,
+		Pending:         bc.Pending,
+		Ledger:          bc.Ledger,
+		Registry:        bc.Registry,
+		Consensus:       consensusName(bc.Consensus),
+		Authorities:     bc.Authorities,
+		TokenSupply:     bc.TokenSupply,
+		Escrows:         bc.Escrows,
+		Proposals:       bc.Proposals,
+		Agreements:      bc.Agreements,
+		UsageMeters:     bc.UsageMeters,
+		UsedNonces:      bc.UsedNonces,
+		SeenTxIDs:       bc.SeenTxIDs,
+		AuditTrail:      bc.AuditTrail,
+		NextNonce:       bc.NextNonce,
+		FinalizedBlocks: bc.FinalizedBlocks,
+		LastFinalized:   bc.LastFinalized,
 	}
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -402,6 +460,8 @@ func (bc *Blockchain) loadFromDisk() error {
 	bc.SeenTxIDs = state.SeenTxIDs
 	bc.AuditTrail = state.AuditTrail
 	bc.NextNonce = state.NextNonce
+	bc.FinalizedBlocks = state.FinalizedBlocks
+	bc.LastFinalized = state.LastFinalized
 	bc.Wallets = make(map[string]ManagedWallet)
 	if bc.UsedNonces == nil {
 		bc.UsedNonces = make(map[string]map[uint64]struct{})
@@ -414,6 +474,9 @@ func (bc *Blockchain) loadFromDisk() error {
 	}
 	if bc.NextNonce == nil {
 		bc.NextNonce = make(map[string]uint64)
+	}
+	if bc.FinalizedBlocks == nil {
+		bc.FinalizedBlocks = make(map[uint64]struct{})
 	}
 	for from, nonceMap := range bc.UsedNonces {
 		maxNonce := uint64(0)
@@ -814,6 +877,7 @@ func (bc *Blockchain) selectValidator() string {
 }
 
 func (bc *Blockchain) proofOfWork(block Block) Block {
+	block.TxMerkleRoot = CalculateMerkleRoot(block.Transactions)
 	target := new(big.Int)
 	target.Lsh(big.NewInt(1), 256-uint(bc.Difficulty))
 	for {
@@ -840,6 +904,55 @@ func (bc *Blockchain) adjustDifficulty() {
 	} else if actualTime > bc.BlockTime*2 && bc.Difficulty > 0 {
 		bc.Difficulty--
 	}
+}
+
+func CanonicalSigningBytes(tx Transaction) []byte {
+	b := strings.Builder{}
+	b.WriteString(tx.ChainID)
+	b.WriteString("\x00")
+	b.WriteString(tx.From)
+	b.WriteString("\x00")
+	b.WriteString(tx.FromPubKey)
+	b.WriteString("\x00")
+	b.WriteString(tx.To)
+	b.WriteString("\x00")
+	b.WriteString(strconv.FormatUint(tx.Amount, 10))
+	b.WriteString("\x00")
+	b.WriteString(strconv.FormatUint(tx.Fee, 10))
+	b.WriteString("\x00")
+	b.WriteString(strconv.FormatUint(tx.Nonce, 10))
+	b.WriteString("\x00")
+	b.WriteString(string(tx.TxType))
+	b.WriteString("\x00")
+	b.WriteString(tx.Payload)
+	b.WriteString("\x00")
+	b.WriteString(strconv.FormatInt(tx.Timestamp, 10))
+	return []byte(b.String())
+}
+
+func CalculateMerkleRoot(transactions []Transaction) string {
+	if len(transactions) == 0 {
+		return ""
+	}
+	var hashes [][]byte
+	for _, tx := range transactions {
+		sum := sha256.Sum256([]byte(tx.ID))
+		hashes = append(hashes, sum[:])
+	}
+	for len(hashes) > 1 {
+		var next [][]byte
+		for i := 0; i < len(hashes); i += 2 {
+			if i+1 < len(hashes) {
+				c := append(append([]byte{}, hashes[i]...), hashes[i+1]...)
+				out := sha256.Sum256(c)
+				next = append(next, out[:])
+			} else {
+				next = append(next, hashes[i])
+			}
+		}
+		hashes = next
+	}
+	return hex.EncodeToString(hashes[0])
 }
 
 func calculateHash(block Block) string {
@@ -1795,6 +1908,32 @@ func (m *serverMetrics) recordRequest(ok bool) {
 	m.mu.Unlock()
 }
 
+func FormatAmount(amount uint64) string {
+	tender := amount / HogohogoPerTender
+	hogohogo := amount % HogohogoPerTender
+	return fmt.Sprintf("%d TENDER %06d HOGOHOGO", tender, hogohogo)
+}
+
+func ParseAmount(text string) (uint64, error) {
+	text = strings.TrimSpace(text)
+	parts := strings.Fields(text)
+	if len(parts) == 0 {
+		return 0, fmt.Errorf("empty amount")
+	}
+	tender, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	var hogohogo uint64
+	if len(parts) >= 2 {
+		v, e := strconv.ParseUint(parts[1], 10, 64)
+		if e == nil && v < HogohogoPerTender {
+			hogohogo = v
+		}
+	}
+	return tender*HogohogoPerTender + hogohogo, nil
+}
+
 func (bc *Blockchain) validateBlock(block Block, prev Block) error {
 	if block.Index != prev.Index+1 {
 		return fmt.Errorf("invalid index")
@@ -1804,6 +1943,11 @@ func (bc *Blockchain) validateBlock(block Block, prev Block) error {
 	}
 	if block.BlockHash == "" {
 		return fmt.Errorf("missing block hash")
+	}
+	if block.TxMerkleRoot != "" {
+		if CalculateMerkleRoot(block.Transactions) != block.TxMerkleRoot {
+			return fmt.Errorf("invalid merkle root")
+		}
 	}
 	if calculateHash(block) != block.BlockHash {
 		return fmt.Errorf("invalid block hash")
@@ -1817,10 +1961,31 @@ func (bc *Blockchain) validateBlock(block Block, prev Block) error {
 			return fmt.Errorf("duplicate transaction")
 		}
 		seen[tx.ID] = struct{}{}
+		if len(CanonicalSigningBytes(tx)) == 0 {
+			return fmt.Errorf("missing canonical signing bytes")
+		}
 		if !bc.validateTransaction(tx) {
 			return fmt.Errorf("invalid transaction")
 		}
 	}
 	return nil
+}
+
+func (bc *Blockchain) FinalizeBlocksAt(index uint64) error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	if index >= uint64(len(bc.Chain)) {
+		return fmt.Errorf("invalid block index")
+	}
+	bc.LastFinalized = index
+	bc.FinalizedBlocks[index] = struct{}{}
+	return nil
+}
+
+func (bc *Blockchain) IsFinalized(index uint64) bool {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	_, ok := bc.FinalizedBlocks[index]
+	return ok
 }
 

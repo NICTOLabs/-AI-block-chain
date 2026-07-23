@@ -65,3 +65,46 @@ func TestFuzzWalletAddressDerivationAgainstEdgeCases(t *testing.T) {
 		}
 	}
 }
+
+func TestMerkleRootValidation(t *testing.T) {
+	txs := []Transaction{
+		{ID: "tx-1", From: "a", To: "b", Amount: 10, Fee: 1, Nonce: 1, TxType: Transfer, Timestamp: 1},
+		{ID: "tx-2", From: "b", To: "c", Amount: 20, Fee: 1, Nonce: 1, TxType: Transfer, Timestamp: 2},
+	}
+	root := CalculateMerkleRoot(txs)
+	if root == "" {
+		t.Fatal("expected non-empty merkle root")
+	}
+	badTxs := []Transaction{
+		{ID: "tx-1", From: "a", To: "b", Amount: 10, Fee: 1, Nonce: 1, TxType: Transfer, Timestamp: 1},
+		{ID: "tx-3", From: "b", To: "c", Amount: 20, Fee: 1, Nonce: 1, TxType: Transfer, Timestamp: 2},
+	}
+	if root == CalculateMerkleRoot(badTxs) {
+		t.Fatal("different transactions should produce a different merkle root")
+	}
+	if CalculateMerkleRoot(nil) != "" {
+		t.Fatal("empty transactions should yield empty merkle root")
+	}
+}
+
+func TestCanonicalSigningBytesStable(t *testing.T) {
+	tx := Transaction{
+		ID:        "tx-1",
+		From:      "addr1",
+		FromPubKey: "pub1",
+		To:        "addr2",
+		Amount:    100,
+		Fee:       5,
+		Nonce:     1,
+		TxType:    Transfer,
+		Payload:   "p",
+		Timestamp: 1234567890,
+		ChainID:   "tdr-mainnet-1",
+	}
+	first := CanonicalSigningBytes(tx)
+	for i := 0; i < 100; i++ {
+		if got := CanonicalSigningBytes(tx); !bytes.Equal(got, first) {
+			t.Fatal("canonical signing bytes are not stable")
+		}
+	}
+}

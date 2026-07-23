@@ -200,6 +200,10 @@ func (cfg TokenomicsConfig) ApplyTransactionFeeBurn(amount uint64) uint64 {
 	return uint64(float64(amount) * cfg.BurnRate)
 }
 
+func FormatTokenomics(amount uint64) string {
+	return FormatAmount(amount)
+}
+
 func (cfg TokenomicsConfig) CalculateEffectiveBurnRate(currentSupply uint64) float64 {
 	if currentSupply > cfg.MaxSupply/2 {
 		return cfg.BurnRate * 1.5

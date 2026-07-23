@@ -1,0 +1,63 @@
+openapi: 3.0.3
+info:
+  title: Tender Blockchain API
+  version: "1.0"
+paths:
+  /api/chain:
+    get:
+      summary: Blockchain state snapshot
+      responses:
+        "200":
+          description: OK
+  /api/mempool:
+    get:
+      summary: Pending transactions
+      responses:
+        "200":
+          description: OK
+  /api/monitoring:
+    get:
+      summary: Node metrics and status
+      responses:
+        "200":
+          description: OK
+  /api/blocks/{height}:
+    get:
+      summary: Block by height
+      parameters:
+        - name: height
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not found
+  /api/tx/{id}:
+    get:
+      summary: Transaction by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not found
+  /api/wallet:
+    post:
+      summary: Create wallet
+      responses:
+        "200":
+          description: OK
+  /api/faucet:
+    post:
+      summary: Request faucet funds
+      responses:
+        "200":
+          description: OK

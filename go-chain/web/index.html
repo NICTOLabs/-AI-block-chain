@@ -83,6 +83,12 @@
 
     <script>
         const API = window.TDR_API || 'http://localhost:8080';
+
+        function formatTender(amount) {
+            const tender = Math.floor(amount / 10000000);
+            const hogohogo = amount % 10000000;
+            return tender + ' TENDER ' + String(hogohogo).padStart(7, '0') + ' HOGOHOGO';
+        }
         
         async function fetchJSON(path) {
             const res = await fetch(API + path);
@@ -95,7 +101,7 @@
                 const data = await fetchJSON('/api/monitoring');
                 document.getElementById('height').textContent = data.height || 0;
                 document.getElementById('pending').textContent = data.pending_transactions || 0;
-                document.getElementById('supply').textContent = (data.token_supply || 0).toLocaleString();
+                document.getElementById('supply').textContent = formatTender(data.token_supply || 0);
                 document.getElementById('peers').textContent = data.peer_count || 0;
                 document.getElementById('consensus').textContent = data.consensus || '-';
             } catch (e) {
@@ -140,8 +146,8 @@
                         <td><code>${(tx.id || tx.ID || '').slice(0, 16)}...</code></td>
                         <td><code>${(tx.from || tx.From || '').slice(0, 16)}...</code></td>
                         <td><code>${(tx.to || tx.To || '').slice(0, 16)}...</code></td>
-                        <td>${(tx.amount || tx.Amount || 0).toLocaleString()}</td>
-                        <td>${tx.fee || tx.Fee || 0}</td>
+                        <td>${formatTender(tx.amount || tx.Amount || 0)}</td>
+                        <td>${formatTender(tx.fee || tx.Fee || 0)}</td>
                         <td><span class="badge badge-success">${tx.tx_type || tx.TxType || '-'}</span></td>
                     </tr>
                 `).join('');
