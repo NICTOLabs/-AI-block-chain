@@ -1,0 +1,57 @@
+{
+  "agent_payments": {
+    "micro_payment_threshold_tdr": 10,
+    "micro_payment_max_gas": 1,
+    "batching": {
+      "enabled": true,
+      "batch_size": 100,
+      "batch_interval_seconds": 300
+    },
+    "refund": {
+      "enabled": true,
+      "auto_refund_on_failure": true,
+      "refund_window_seconds": 86400
+    },
+    "limits": {
+      "max_spend_per_agent_per_day": 100000,
+      "max_calls_per_model_per_day": 10000,
+      "require_spending_approval_above": 1000
+    },
+    "currencies": {
+      "preferred_settlement": "TDR",
+      "accepted_collateral": ["TDR", "WTDR"]
+    }
+  },
+  "frameworks": {
+    "langchain": {
+      "enabled": true,
+      "sdk_package": "tdr-sdk",
+      "rpc_endpoint": "https://tdr-mainnet-1.tender.network"
+    },
+    "autogen": {
+      "enabled": true,
+      "sdk_package": "tdr-sdk",
+      "rpc_endpoint": "https://tdr-mainnet-1.tender.network"
+    },
+    "eliza": {
+      "enabled": true,
+      "sdk_package": "tdr-sdk",
+      "rpc_endpoint": "https://tdr-mainnet-1.tender.network"
+    }
+  },
+  "platforms": {
+    "virtuals_protocol": {
+      "enabled": true,
+      "token_listed": false,
+      "liquidity_pair": "TDR/ETH"
+    },
+    "bittensor": {
+      "enabled": true,
+      "token_listed": false,
+      "liquidity_pair": "TDR/USDT"
+    },
+    "ai_agent_aggregator": {
+      "enabled": false
+    }
+  }
+}

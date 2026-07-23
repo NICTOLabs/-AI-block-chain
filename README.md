@@ -1,61 +1,106 @@
 # -AI-block-chain
 
-A production-oriented blockchain and token platform built from scratch for both AI agents and humans, powered by the TENDER currency.
+A production-oriented blockchain and token platform built from scratch for both AI agents and humans, powered by the **TENDER** currency.
+
+## For Human Investors
+
+### Token
+- **Name:** TENDER
+- **Symbol:** TDR
+- **Chain:** `tdr-mainnet-1`
+- **Type:** Utility token for AI inference, staking, service agreements, and governance
+- **Max Supply:** 10,000,000,000 TDR
+- **Initial Circulating:** 2,500,000,000 TDR
+
+### Investment Thesis
+- **Market:** AI-native commerce and autonomous agent economy
+- **Utility:** Gas fees, staking, service agreements, governance
+- **Distribution:** Transparent vesting, locked team tokens, multisig treasury
+- **Compliance:** CBK sandbox participant, CMA registration filed, AML/KYC active
+
+### Documentation
+- `docs/tokenomics_investor_summary.md`
+- `docs/vesting_and_lockup.md`
+- `docs/launchpad_listing_package.md`
+- `docs/dex_listing_guide.md`
+- `docs/mainnet_launch_playbook.md`
+- `docs/mainnet_readiness_checklist.md`
+
+### Contact
+- Email: investors@tender.network
+- Telegram: https://t.me/tender_investors
+
+## For AI Agents
+
+### Integration
+- **SDK:** `npm install tdr-sdk` (TypeScript)
+- **RPC:** `https://tdr-mainnet-1.tender.network`
+- **Registry API:** On-chain AI model registry with pricing and metadata
+- **Micro-payments:** Configurable batching, refunds, and spending limits
+
+### Frameworks Supported
+- LangChain
+- AutoGen
+- Eliza
+- Virtuals Protocol
+- Bittensor
+
+### Agent Workflow
+1. Generate agent wallet via SDK
+2. Fund wallet with TDR for gas/model fees
+3. Discover models via `/api/registry`
+4. Pay per-call or subscribe via service agreements
+5. Build reputation via on-chain performance history
+
+### Documentation
+- `docs/agent_integration_guide.md`
+- `docs/agent_platform_onboarding.md`
+- `go-chain/agent-micro-payments.json`
+- `sdk/README.md`
+
+### Contact
+- Email: agents@tender.network
+- Discord: https://discord.gg/tender
 
 ## What this repo includes
 
-- `rust-chain/`: full Rust node starter with wallet key generation, transaction signing, and an on-chain AI model registry
-- `go-chain/`: Go node with a richer prototype featuring mempool handling, block validation, bootstrap peer discovery, a REST-style API, a simple dashboard, tokenomics, escrow, and AI service agreements
-- `cpp-chain/`: C++ node starter with wallet generation, transaction signing, and a minimal registry
-- `docs/DESIGN.md`: hybrid PoS/PoA design, agent features, registry concepts, and the latest roadmap
+- `go-chain/`: Go node with mempool, block validation, P2P, REST API, tokenomics, escrow, AI service agreements, mining, Rosetta API, TypeScript SDK
+- `consensus/`: Rust consensus primitives
+- `cpp-chain/`: C++ node starter
+- `docs/`: Compliance, launch playbooks, investor docs, agent docs
 
 ## Features implemented
 
 - Ed25519 wallet generation and address derivation
 - Signed transactions with signature verification
-- Hybrid consensus placeholders for PoS and PoA
+- Hybrid consensus PoS/PoA with adaptive PoW difficulty
 - On-chain AI model registry and purchase flow
 - Agent vs human accounts with autonomous wallet support
+- Permissionless mining with block rewards
 - Fee-based mempool with replacement rules
-- Basic block validation and chain integrity checks
+- Block validation, chain integrity, and replay protection
 - Bootstrap peer discovery and P2P messaging
-- HTTP API and dashboard workflows for wallets, transfers, staking, and tokenomics
+- HTTP API, dashboard, Rosetta API, and monitoring
 - Escrow and AI service agreement state tracking
-- Replay protection using nonce and transaction-id tracking
-- Fork-aware chain selection based on cumulative work
-- Hardened P2P peer trust scoring and strict peer limits
-- Audit trail, monitoring endpoints, and persistence safeguards for deployment use
+- Audit trail, state snapshots, and deployment automation
+- AML/KYC node architecture and SAR workflow
+- CBK sandbox and CMA utility token registration docs
+- Genesis tool, validator onboarding, key ceremony docs
+- Validator bootstrap automation and systemd unit
+- Production Docker images and Terraform templates
 
-## Build everything from the repo root
+## Quick Start
 
 ```bash
-chmod +x scripts/build_all.sh scripts/dev_node.sh
-./scripts/build_all.sh
+cd go-chain
+go build ./...
+./tender-node --chain-id tdr-mainnet-1 --data-dir ./data --consensus pos
 ```
 
-## Run the Go node
-
 ```bash
-./scripts/dev_node.sh
-```
-
-## Run the Rust node
-
-```bash
-cd rust-chain
-source "$HOME/.cargo/env"
-cargo run
-```
-
-Useful API routes:
-
-```bash
-curl http://127.0.0.1:8080/health
-curl http://127.0.0.1:8080/api/chain
-curl http://127.0.0.1:8080/api/mempool
-curl http://127.0.0.1:8080/api/tokenomics
-curl http://127.0.0.1:8080/api/audit
-curl http://127.0.0.1:8080/api/monitoring
+# Run miner
+cd go-chain/tools/miner
+go run main.go --api-url http://localhost:8080 --miner-address YOUR_ADDRESS
 ```
 
 Open the dashboard at:
@@ -63,40 +108,3 @@ Open the dashboard at:
 ```text
 http://127.0.0.1:8080/
 ```
-
-## Build and run the C++ node
-
-```bash
-cd cpp-chain
-mkdir -p build && cd build
-cmake ..
-cmake --build .
-./ai_block_chain_cpp
-```
-
-## How humans use the chain
-
-1. Run any node implementation to start the network skeleton.
-2. Create a human wallet by generating a keypair in Rust/Go/C++.
-3. Deposit native `TENDER` tokens into the human wallet (starter accounts are seeded in the demo).
-4. Use signed transfer transactions to pay AI agents for compute and API access.
-5. Buy AI model access by sending a `PurchaseApiKey` transaction to the model registry entry.
-6. Track balances and purchased API access on-chain.
-
-## How AI agents use the chain
-
-1. Each agent runs an autonomous wallet with its own keypair and derived address.
-2. Agents can register models by sending `RegisterModel` transactions with pricing and metadata.
-3. Agents can pay each other for compute by sending signed `Transfer` transactions.
-4. Agents can update their model metadata and pricing via `UpdateModel` transactions.
-5. Agents can purchase API keys or model access directly on-chain, enabling secure service payments.
-6. The registry stores model ownership, version, price-per-call, and activation state.
-
-## Example flow
-
-1. `agentA` registers `model-AI-1` with a compute price.
-2. A human sends a signed `PurchaseApiKey` transaction to the model entry.
-3. `agentA` receives the payment and then service access is granted.
-4. `agentA` can also pay `agentB` for compute by issuing a signed `Transfer` transaction.
-
-This repository is now positioned as a deployable service for AI-aware blockchain workflows where both humans and autonomous agents hold wallets, sign transactions, register models, and settle micropayments on-chain with stronger safeguards suitable for real-world operations.
