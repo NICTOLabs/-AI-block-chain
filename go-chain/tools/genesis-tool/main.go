@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -24,20 +26,27 @@ type GenesisAllocation struct {
 }
 
 type ValidatorMeta struct {
-	Address string `json:"address"`
+	Address  string `json:"address"`
 	PublicKey string `json:"public_key"`
-	Stake   uint64 `json:"stake"`
-	Country string `json:"country"`
-	City    string `json:"city"`
-	Contact string `json:"contact,omitempty"`
+	Stake    uint64 `json:"stake"`
+	Country  string `json:"country"`
+	City     string `json:"city"`
+	Contact  string `json:"contact,omitempty"`
+}
+
+type GenesisSignature struct {
+	SignerAddress string `json:"signer_address"`
+	PublicKey     string `json:"public_key"`
+	Signature     string `json:"signature"`
+	SignedAt      int64  `json:"signed_at"`
 }
 
 type GenesisFile struct {
-	ChainID      string              `json:"chain_id"`
-	GenesisTime  int64               `json:"genesis_time"`
-	Consensus    string              `json:"consensus"`
-	InitialSupply uint64             `json:"initial_supply"`
-	MaxSupply    uint64              `json:"max_supply"`
+	ChainID       string              `json:"chain_id"`
+	GenesisTime   int64               `json:"genesis_time"`
+	Consensus     string              `json:"consensus"`
+	InitialSupply uint64              `json:"initial_supply"`
+	MaxSupply     uint64              `json:"max_supply"`
 	Token        struct {
 		Name     string `json:"name"`
 		Symbol   string `json:"symbol"`
@@ -55,12 +64,15 @@ type GenesisFile struct {
 		InflationDecay     float64 `json:"inflation_decay_per_year"`
 	} `json:"economics"`
 	Multisig struct {
-		Threshold int      `json:"threshold"`
-		Signers   []string `json:"signers,omitempty"`
+		Threshold int                `json:"threshold"`
+		Signers   []string           `json:"signers,omitempty"`
+		Signatures []GenesisSignature `json:"signatures,omitempty"`
+		Finalized bool               `json:"finalized"`
+		FinalizedAt int64            `json:"finalized_at,omitempty"`
 	} `json:"multisig"`
 }
 
-func main() {
+func mainGenerate() {
 	output := flag.String("output", "genesis_mainnet.json", "Output path for genesis file")
 	chainID := flag.String("chain-id", "tdr-mainnet-1", "Chain ID")
 	initialSupply := flag.Uint64("initial-supply", 4500000000, "Initial token supply")
@@ -169,23 +181,160 @@ func main() {
 		genesis.Multisig.Signers = append(genesis.Multisig.Signers, genesis.Validators[0].PublicKey)
 	}
 
+	writeGenesis(*output, genesis)
+	fmt.Printf("Genesis phase 1 written to %s\n", *output)
+	fmt.Printf("Supply: %d | Validators: %d | Signers: %d/%d\n", genesis.InitialSupply, len(genesis.Validators), len(genesis.Multisig.Signatures), genesis.Multisig.Threshold)
+}
+
+func mainSign() {
+	genesisPath := flag.String("genesis", "genesis_mainnet.json", "Path to genesis file")
+	privKeyHex := flag.String("private-key", "", "Signer private key hex")
+	address := flag.String("address", "", "Signer address")
+	output := flag.String("output", "", "Output path for signed genesis")
+	flag.Parse()
+
+	if *privKeyHex == "" || *address == "" {
+		panic("--private-key and --address are required")
+	}
+	if *output == "" {
+		*output = *genesisPath
+	}
+
+	genesis := mustLoadGenesis(*genesisPath)
+	if genesis.Multisig.Finalized {
+		panic("genesis already finalized")
+	}
+
+	pub, priv, err := generateKeyPairFromHex(*privKeyHex)
+	if err != nil {
+		panic(err)
+	}
+	if !strings.EqualFold(hex.EncodeToString(pub), strings.TrimPrefix(*address, "0x")) {
+		panic("private key does not match provided address")
+	}
+
+	signerAllowed := false
+	for _, s := range genesis.Multisig.Signers {
+		if strings.EqualFold(s, hex.EncodeToString(pub)) {
+			signerAllowed = true
+			break
+		}
+	}
+	if !signerAllowed {
+		panic("provided public key is not in the signer set")
+	}
+
+	for _, sig := range genesis.Multisig.Signatures {
+		if strings.EqualFold(sig.SignerAddress, *address) {
+			panic("address already signed")
+		}
+	}
+
+	canonicalJSON, err := json.Marshal(genesis)
+	if err != nil {
+		panic(err)
+	}
+	sig := ed25519.Sign(priv, canonicalJSON)
+
+	genesis.Multisig.Signatures = append(genesis.Multisig.Signatures, GenesisSignature{
+		SignerAddress: *address,
+		PublicKey:     hex.EncodeToString(pub),
+		Signature:     hex.EncodeToString(sig),
+		SignedAt:      time.Now().Unix(),
+	})
+
+	if len(genesis.Multisig.Signatures) >= genesis.Multisig.Threshold {
+		genesis.Multisig.Finalized = true
+		genesis.Multisig.FinalizedAt = time.Now().Unix()
+	}
+
+	writeGenesis(*output, genesis)
+	fmt.Printf("Signed genesis written to %s\n", *output)
+	fmt.Printf("Signatures: %d/%d | Finalized: %v\n", len(genesis.Multisig.Signatures), genesis.Multisig.Threshold, genesis.Multisig.Finalized)
+}
+
+func mainVerify() {
+	genesisPath := flag.String("genesis", "genesis_mainnet.json", "Path to genesis file")
+	flag.Parse()
+
+	genesis := mustLoadGenesis(*genesisPath)
+	canonicalJSON, err := json.Marshal(genesis)
+	if err != nil {
+		panic(err)
+	}
+	hash := sha256.Sum256(canonicalJSON)
+	fmt.Printf("Genesis hash: %s\n", hex.EncodeToString(hash[:]))
+	fmt.Printf("Finalized: %v\n", genesis.Multisig.Finalized)
+	fmt.Printf("Signatures: %d/%d\n", len(genesis.Multisig.Signatures), genesis.Multisig.Threshold)
+	for i, sig := range genesis.Multisig.Signatures {
+		pub, err := hex.DecodeString(sig.PublicKey)
+		if err != nil {
+			panic(err)
+		}
+		sigBytes, err := hex.DecodeString(sig.Signature)
+		if err != nil {
+			panic(err)
+		}
+		valid := ed25519.Verify(pub, canonicalJSON, sigBytes)
+		fmt.Printf("  %d: %s valid=%v\n", i+1, sig.SignerAddress, valid)
+	}
+	if !genesis.Multisig.Finalized && len(genesis.Multisig.Signatures) >= genesis.Multisig.Threshold {
+		fmt.Println("Threshold reached but genesis not marked finalized")
+	} else if genesis.Multisig.Finalized {
+		fmt.Println("Genesis finalized")
+	}
+}
+
+func main() {
+	action := flag.String("action", "generate", "Action: generate | sign | verify")
+	flag.Parse()
+	switch *action {
+	case "generate":
+		mainGenerate()
+	case "sign":
+		mainSign()
+	case "verify":
+		mainVerify()
+	default:
+		fmt.Printf("unknown action: %s\n", *action)
+	}
+}
+
+func writeGenesis(path string, genesis GenesisFile) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		panic(err)
+	}
 	data, err := json.MarshalIndent(genesis, "", "  ")
 	if err != nil {
 		panic(err)
 	}
-	_ = os.MkdirAll("genesis", 0o755)
-	if err := os.WriteFile(*output, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		panic(err)
 	}
-	signature := sha256.Sum256(data)
-	_ = os.WriteFile(*output+".sha256", []byte(hex.EncodeToString(signature[:])+"  "+filepath.Base(*output)+"\n"), 0o644)
+}
 
-	fmt.Printf("Genesis file written to %s\n", *output)
-	fmt.Printf("Genesis SHA256: %s\n", hex.EncodeToString(signature[:]))
-	fmt.Printf("Total supply: %d\n", genesis.InitialSupply)
-	fmt.Printf("Validators: %d\n", len(genesis.Validators))
-	fmt.Printf("Allocations: %d\n", len(genesis.Allocations))
-	fmt.Printf("Multisig threshold: %d/%d\n", genesis.Multisig.Threshold, len(genesis.Multisig.Signers))
+func mustLoadGenesis(path string) GenesisFile {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		panic(err)
+	}
+	var genesis GenesisFile
+	if err := json.Unmarshal(data, &genesis); err != nil {
+		panic(err)
+	}
+	return genesis
+}
+
+func generateKeyPairFromHex(privHex string) (ed25519.PublicKey, ed25519.PrivateKey, error) {
+	privBytes, err := hex.DecodeString(strings.TrimPrefix(privHex, "0x"))
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(privBytes) != ed25519.PrivateKeySize {
+		return nil, nil, errors.New("invalid private key size")
+	}
+	pub := privBytes.Public()
+	return pub.(ed25519.PublicKey), privBytes, nil
 }
 
 type keyPair struct {

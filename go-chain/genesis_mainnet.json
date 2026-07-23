@@ -9,15 +9,15 @@
     "symbol": "TDR",
     "decimals": 8
   },
-  "allocations": [
-    {
-      "address": "795ca3616aad725d6336cecbf2d25bb532a6c797530822df8598e69565cf7cd4",
-      "public_key": "22b9b0714c40678cf4be542ae9b1c03759272f16cdbc036580213dbd700ced6d",
-      "amount": 675000000,
-      "description": "Team and advisors",
-      "lockup_until": 1910994350,
-      "vesting": "linear_4_years"
-    },
+   "allocations": [
+     {
+       "address": "0x09f046ab4b755d228e06c528d1a8cad540ae92f7",
+       "public_key": "treasury-multisig-address",
+       "amount": 675000000,
+       "description": "Team and advisors",
+       "lockup_until": 1910994350,
+       "vesting": "linear_4_years"
+     },
     {
       "address": "273f061e8dda2f0e5a2787df9a27130f77b1c6c4019b635429d1f9de9ca944fb",
       "public_key": "fab707beab3898ee96756a5c9aa7f0adbb9ba88c7cd733d592d403afa19ca013",
@@ -166,8 +166,12 @@
   "multisig": {
     "threshold": 2,
     "signers": [
+      "0x09f046ab4b755d228e06c528d1a8cad540ae92f7",
       "b4cbec6cee2f1582adf9e6f9ce478bacbff623d6ecd439a3b3dfca104a1eccf1",
       "1862e7bee8df1b5ff0acdbbfae36f65a0adc6e27fa5edd1ed115bf58e5ebeba1"
-    ]
+    ],
+    "signatures": [],
+    "finalized": false,
+    "finalized_at": 0
   }
 }
