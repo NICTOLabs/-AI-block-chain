@@ -80,6 +80,7 @@ type ConsensusType int
 const (
 	ProofOfStake ConsensusType = iota
 	ProofOfAuthority
+	ProofOfWork
 )
 
 const (
@@ -89,7 +90,6 @@ const (
 	RewardRatePercent uint64 = 4
 	MinStake          uint64 = 100
 	SlashPercent      uint64 = 10
-	CurrencyName      string = "TENDER"
 	MaxSupply         uint64 = 18_446_744_073_709_551_615
 	InitialSupply     uint64 = 50_000_000_000
 	BlockRewardBase   uint64 = 100
@@ -100,6 +100,8 @@ const (
 	AlucardDecayFactor  uint64 = 70
 	AlucardCycleBlocks  uint64 = 78_914_000
 )
+
+var CurrencyName = "TENDER"
 
 type Escrow struct {
 	ID        string `json:"id"`
@@ -470,18 +472,47 @@ func (bc *Blockchain) seedDemoState() {
 
 type genesisFile struct {
 	ChainID       string `json:"chain_id"`
+	GenesisTime   int64  `json:"genesis_time"`
+	Consensus     string `json:"consensus"`
 	InitialSupply uint64 `json:"initial_supply"`
 	MaxSupply     uint64 `json:"max_supply"`
-	Allocations   []struct {
-		Address   string `json:"address"`
-		PublicKey string `json:"public_key"`
-		Amount    uint64 `json:"amount"`
+	Token         struct {
+		Name     string `json:"name"`
+		Symbol   string `json:"symbol"`
+		Decimals int    `json:"decimals"`
+	} `json:"token"`
+	Allocations []struct {
+		Address      string `json:"address"`
+		PublicKey    string `json:"public_key"`
+		Amount       uint64 `json:"amount"`
+		Description  string `json:"description"`
+		LockupUntil  int64  `json:"lockup_until"`
+		Vesting      string `json:"vesting"`
 	} `json:"allocations"`
 	Validators []struct {
 		Address   string `json:"address"`
 		PublicKey string `json:"public_key"`
 		Stake     uint64 `json:"stake"`
+		Country   string `json:"country"`
+		City      string `json:"city"`
+		Contact   string `json:"contact"`
 	} `json:"validators"`
+	Economics struct {
+		BaseGasFee          uint64  `json:"base_gas_fee"`
+		BurnRatePercent     uint64  `json:"burn_rate_percent"`
+		RewardRatePercent   uint64  `json:"reward_rate_percent"`
+		MinStake            uint64  `json:"min_stake"`
+		BlockTimeSeconds    uint64  `json:"block_time_seconds"`
+		InflationStartYear  uint64  `json:"inflation_start_year"`
+		InflationDecayPerYear float64 `json:"inflation_decay_per_year"`
+	} `json:"economics"`
+	Multisig struct {
+		Threshold   uint64   `json:"threshold"`
+		Signers     []string `json:"signers"`
+		Signatures  []string `json:"signatures"`
+		Finalized   bool     `json:"finalized"`
+		FinalizedAt int64    `json:"finalized_at"`
+	} `json:"multisig"`
 }
 
 func (bc *Blockchain) loadGenesis(path string) error {
@@ -495,6 +526,19 @@ func (bc *Blockchain) loadGenesis(path string) error {
 	}
 	if genesis.ChainID != "" {
 		bc.ChainID = genesis.ChainID
+	}
+	if genesis.Consensus != "" {
+		switch genesis.Consensus {
+		case "poa":
+			bc.Consensus = ProofOfAuthority
+		case "pow":
+			bc.Consensus = ProofOfWork
+		default:
+			bc.Consensus = ProofOfStake
+		}
+	}
+	if genesis.Token.Symbol != "" {
+		CurrencyName = genesis.Token.Symbol
 	}
 	bc.TokenSupply = 0
 	for _, alloc := range genesis.Allocations {
@@ -860,7 +904,11 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 			atomic.AddInt64(&bc.ensureMetrics().txAccepted, 1)
 		}
 	}
-	block = bc.proofOfWork(block)
+	if minerAddress == "" || bc.Consensus == ProofOfWork {
+		block = bc.proofOfWork(block)
+	} else {
+		block.BlockHash = calculateHash(block)
+	}
 	if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
 		return nil, err
 	}
@@ -1183,10 +1231,14 @@ func verifyTransaction(tx Transaction) bool {
 }
 
 func consensusName(consensus ConsensusType) string {
-	if consensus == ProofOfAuthority {
+	switch consensus {
+	case ProofOfAuthority:
 		return "poa"
+	case ProofOfWork:
+		return "pow"
+	default:
+		return "pos"
 	}
-	return "pos"
 }
 
 func currencySymbol() string {
@@ -1195,7 +1247,7 @@ func currencySymbol() string {
 
 func serverConfigFromEnv() serverConfig {
 	cfg := serverConfig{
-		APIKey:      getEnvOrDefault("TENDER_API_KEY", "change-me-in-production"),
+		APIKey:      getEnvOrDefault("TENDER_API_KEY", ""),
 		EnableAuth:  getEnvBoolOrDefault("TENDER_ENABLE_AUTH", true),
 		RateLimit:   getEnvIntOrDefault("TENDER_RATE_LIMIT", 60),
 		RateWindow:  time.Duration(getEnvIntOrDefault("TENDER_RATE_WINDOW_SECONDS", 60)) * time.Second,
@@ -1273,6 +1325,9 @@ func main() {
 	}
 	if *rateLimit != 0 {
 		envCfg.RateLimit = *rateLimit
+	}
+	if envCfg.APIKey == "" {
+		log.Fatal("API key must be set via --api-key or TENDER_API_KEY env var")
 	}
 
 	var chainConsensus ConsensusType

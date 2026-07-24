@@ -66,7 +66,7 @@ type serverMetrics struct {
 
 func ServerConfigFromEnv() ServerConfig {
 	cfg := ServerConfig{
-		APIKey:      getEnvOrDefault("TENDER_API_KEY", "change-me-in-production"),
+		APIKey:      getEnvOrDefault("TENDER_API_KEY", ""),
 		EnableAuth:  getEnvBoolOrDefault("TENDER_ENABLE_AUTH", true),
 		RateLimit:   getEnvIntOrDefault("TENDER_RATE_LIMIT", 60),
 		RateWindow:  time.Duration(getEnvIntOrDefault("TENDER_RATE_WINDOW_SECONDS", 60)) * time.Second,

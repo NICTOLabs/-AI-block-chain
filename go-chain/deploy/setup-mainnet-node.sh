@@ -37,7 +37,7 @@ if [ -f "${REPO_DIR}/genesis_mainnet.json" ]; then
 fi
 
 cat > /etc/tender/node.env <<EOF
-TENDER_API_KEY=${TENDER_API_KEY:-change-me-in-production}
+TENDER_API_KEY=${TENDER_API_KEY:-}
 TENDER_ENABLE_AUTH=true
 TENDER_STRICT_P2P=true
 TENDER_DATA_DIR=${DATA_DIR}

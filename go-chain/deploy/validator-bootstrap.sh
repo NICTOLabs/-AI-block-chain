@@ -35,7 +35,7 @@ WorkingDirectory=/opt/tender
 ExecStart=/opt/tender/tender-node --chain-id ${CHAIN_ID} --data-dir /opt/tender/data --consensus pos --api-port ${API_PORT} --p2p-port ${P2P_PORT} --enable-auth --strict-p2p
 Restart=always
 RestartSec=5
-Environment="TENDER_API_KEY=${TENDER_API_KEY:-change-me-in-production}"
+Environment="TENDER_API_KEY=${TENDER_API_KEY:-}"
 Environment="TENDER_ENABLE_AUTH=true"
 Environment="TENDER_STRICT_P2P=true"
 

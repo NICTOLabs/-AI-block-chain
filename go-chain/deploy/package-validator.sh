@@ -38,7 +38,7 @@ Restart=always
 RestartSec=5
 Environment="TENDER_ENABLE_AUTH=true"
 Environment="TENDER_STRICT_P2P=true"
-Environment="TENDER_API_KEY=${TENDER_API_KEY:-change-me-in-production}"
+Environment="TENDER_API_KEY=${TENDER_API_KEY:-}"
 
 [Install]
 WantedBy=multi-user.target

@@ -27,8 +27,21 @@ bool VM::Execute(const std::vector<std::uint8_t>& bytecode, ExecutionContext& co
         }
 
         if (IsAIInstruction(opcode)) {
-            context.gas_remaining -= GasCostForOpcode(static_cast<AIOpcode>(opcode));
-            context.trace.emplace_back("ai-opcode");
+            const auto ai = static_cast<AIOpcode>(opcode);
+            const std::uint64_t cost = GasCostForOpcode(ai);
+            if (context.gas_remaining < cost) {
+                context.trace.emplace_back("out-of-gas:" + OpcodeName(ai));
+                return false;
+            }
+            context.gas_remaining -= cost;
+            if (context.handler) {
+                if (!context.handler(ai, context)) {
+                    context.trace.emplace_back("handler-failed:" + OpcodeName(ai));
+                    return false;
+                }
+            } else {
+                context.trace.emplace_back("ai-opcode:" + OpcodeName(ai));
+            }
             continue;
         }
 

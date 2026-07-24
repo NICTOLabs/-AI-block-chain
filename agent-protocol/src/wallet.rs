@@ -1,3 +1,5 @@
+use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use thiserror::Error;
@@ -32,6 +34,8 @@ pub enum WalletError {
     GuardianRequired,
     #[error("transaction exceeds guardian threshold")]
     ThresholdExceeded,
+    #[error("keypair generation failed")]
+    KeypairGenerationFailed,
 }
 
 impl AgentWallet {
@@ -64,12 +68,18 @@ impl AgentWallet {
         wallet
     }
 
-    /// Simulate signing a transaction payload with the runtime-provided private key.
-    pub fn sign_tx(&self, payload: &[u8]) -> Vec<u8> {
-        let mut output = Vec::with_capacity(payload.len() + 1);
-        output.extend_from_slice(payload);
-        output.push(0xAA);
-        output
+    /// Sign a transaction payload with the runtime-provided private key.
+    pub fn sign_tx(&self, payload: &[u8]) -> Result<Vec<u8>, WalletError> {
+        let secret_bytes = self.pubkey.as_slice();
+        if secret_bytes.len() != 32 {
+            return Err(WalletError::KeypairGenerationFailed);
+        }
+        let secret = SecretKey::from_bytes(secret_bytes)
+            .map_err(|_| WalletError::KeypairGenerationFailed)?;
+        let public = PublicKey::from(&secret);
+        let keypair = Keypair { secret, public };
+        let signature: Signature = keypair.sign(payload);
+        Ok(signature.to_bytes().to_vec())
     }
 
     /// Validate whether a transaction requires dual-signature approval.
@@ -101,5 +111,14 @@ mod tests {
     fn guardian_approval_is_required_for_large_amounts() {
         let wallet = AgentWallet::with_guardian("gpt-4o-mini", vec![1], Some([9u8; 32]));
         assert!(wallet.requires_guardian_approval(1000, 500));
+    }
+
+    #[test]
+    fn sign_tx_produces_ed25519_signature() {
+        let wallet = AgentWallet::from_model_id("test-model", vec![0xAB; 32]);
+        let payload = b"test-payload";
+        let sig = wallet.sign_tx(payload);
+        assert!(sig.is_ok());
+        assert_eq!(sig.unwrap().len(), 64);
     }
 }
