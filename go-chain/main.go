@@ -21,6 +21,7 @@ func main() {
 	apiKey := flag.String("api-key", "", "API key required for protected endpoints")
 	enableAuth := flag.Bool("enable-auth", false, "Require API key auth for mutating endpoints")
 	rateLimit := flag.Int("rate-limit", 0, "Requests per minute per client")
+	faucetAmount := flag.Int("faucet-amount", 0, "Default faucet funding amount")
 	chainID := flag.String("chain-id", "tdr-mainnet-1", "Chain ID for replay protection")
 	flag.Parse()
 
@@ -48,6 +49,9 @@ func main() {
 	}
 	if *rateLimit != 0 {
 		envCfg.RateLimit = *rateLimit
+	}
+	if *faucetAmount != 0 {
+		envCfg.FaucetAmount = uint64(*faucetAmount)
 	}
 
 	var chainConsensus blockchain.ConsensusType
@@ -77,6 +81,6 @@ func main() {
 	go p2pNode.ConnectToPeers()
 	go api.StartAPI(chain, envCfg.APIPort, p2pNode, envCfg)
 
-	blockchain.LogJSON("node_start", "node", fmt.Sprintf("currency=%s api_port=%d p2p_port=%d consensus=%s chain_id=%s", blockchain.CurrencySymbol(), envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus, *chainID))
+	blockchain.LogJSON("node_start", "node", fmt.Sprintf("currency=%s api_port=%d p2p_port=%d consensus=%s chain_id=%s faucet_amount=%d", blockchain.CurrencySymbol(), envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus, *chainID, envCfg.FaucetAmount))
 	<-p2pNode.Shutdown()
 }

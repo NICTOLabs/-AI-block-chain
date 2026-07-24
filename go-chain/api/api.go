@@ -31,6 +31,7 @@ type ServerConfig struct {
 	DataDir     string
 	Consensus   string
 	StrictP2P   bool
+	FaucetAmount uint64
 }
 
 type rateLimiter struct {
@@ -72,6 +73,7 @@ func ServerConfigFromEnv() ServerConfig {
 		DataDir:     getEnvOrDefault("TENDER_DATA_DIR", "./data"),
 		Consensus:   strings.ToLower(getEnvOrDefault("TENDER_CONSENSUS", "pos")),
 		StrictP2P:   getEnvBoolOrDefault("TENDER_STRICT_P2P", true),
+		FaucetAmount: uint64(getEnvIntOrDefault("TENDER_FAUCET_AMOUNT", 1000)),
 	}
 	return cfg
 }
@@ -421,6 +423,38 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": address, "public_key": hex.EncodeToString(wallet.PublicKey)})
 	})
+	mux.HandleFunc("/api/faucet", func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.allow(r.RemoteAddr) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Address string `json:"address"`
+			Amount  uint64 `json:"amount"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if payload.Address == "" {
+			http.Error(w, "missing address", http.StatusBadRequest)
+			return
+		}
+		amount := payload.Amount
+		if amount == 0 {
+			amount = cfg.FaucetAmount
+		}
+		chain.FundAccount(payload.Address, amount)
+		chain.RLock()
+		balance := chain.Ledger[payload.Address].Balance
+		chain.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": amount, "balance": balance})
+	})
 	mux.HandleFunc("/api/managed-wallets", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -465,6 +499,34 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		_ = chain.SaveToDisk()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(payload)
+	})
+	mux.HandleFunc("/api/transfer-binary", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if !limiter.allow(r.RemoteAddr) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		tx, err := blockchain.DecodeTransactionBinary(data)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		chain.EnqueueTransaction(tx)
+		_ = chain.SaveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(tx)
 	})
 	mux.HandleFunc("/api/escrow", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

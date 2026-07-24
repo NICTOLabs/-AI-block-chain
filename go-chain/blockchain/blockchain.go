@@ -230,6 +230,20 @@ func (bc *Blockchain) AddAccount(address string, balance uint64, isAgent bool) {
 	bc.addAccountLocked(address, balance, isAgent)
 }
 
+func (bc *Blockchain) FundAccount(address string, amount uint64) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	if bc.Ledger[address] == nil {
+		bc.Ledger[address] = &Account{Address: address, Balance: amount, Staked: 0, IsAgent: false}
+		bc.appendAuditEntry("account_created", address, fmt.Sprintf("balance=%d funded=true", amount))
+	} else {
+		bc.Ledger[address].Balance += amount
+		bc.appendAuditEntry("account_funded", address, fmt.Sprintf("amount=%d", amount))
+	}
+	bc.TokenSupply += amount
+	_ = bc.SaveToDisk()
+}
+
 func (bc *Blockchain) CreateManagedWallet(label string, isAgent bool) (ManagedWallet, error) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
