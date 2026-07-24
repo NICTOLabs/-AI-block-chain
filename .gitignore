@@ -38,3 +38,8 @@ Thumbs.db
 *.pem
 *.key
 *.pub
+# Sensitive wallet and chain data
+go-chain/tools/wallet/*.json
+go-chain/tools/wallet/*.json.enc
+go-chain/data/chain.json
+go-chain/node.log
