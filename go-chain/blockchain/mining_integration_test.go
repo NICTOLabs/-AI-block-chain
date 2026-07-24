@@ -12,11 +12,15 @@ func TestMineBlockIncludesSignedTransfer(t *testing.T) {
 	to := "0000000000000000000000000000000000000000000000000000000000000001"
 	bc.AddAccount(to, 0, false)
 
+	fee := bc.estimateFee(Transaction{TxType: Transfer}, 0)
+	if fee < BaseFee+FeeMultiplier+10 {
+		fee = BaseFee + FeeMultiplier + 10
+	}
 	tx := wallet.Sign(Transaction{
 		From:    from,
 		To:      to,
 		Amount:  10,
-		Fee:     BaseFee + FeeMultiplier + 10,
+		Fee:     fee + 100,
 		Nonce:   1,
 		TxType:  Transfer,
 		ChainID: bc.ChainID,

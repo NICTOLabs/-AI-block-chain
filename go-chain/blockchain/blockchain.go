@@ -79,7 +79,6 @@ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blo
 		ChainID:         chainID,
 		BlockTime:       time.Second * 5,
 		Difficulty:      16,
-		metrics:         &serverMetrics{},
 		FinalizedBlocks: make(map[uint64]struct{}),
 		LastFinalized:   0,
 		AgentTxCount:    0,
@@ -134,6 +133,7 @@ func (bc *Blockchain) SaveToDisk() error {
 		NextNonce:       bc.NextNonce,
 		FinalizedBlocks: bc.FinalizedBlocks,
 		LastFinalized:   bc.LastFinalized,
+		AgentTxCount:    bc.AgentTxCount,
 	}
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -169,6 +169,7 @@ func (bc *Blockchain) LoadFromDisk() error {
 	bc.NextNonce = state.NextNonce
 	bc.FinalizedBlocks = state.FinalizedBlocks
 	bc.LastFinalized = state.LastFinalized
+	bc.AgentTxCount = state.AgentTxCount
 	for from, nonceMap := range bc.UsedNonces {
 		maxNonce := uint64(0)
 		for nonce := range nonceMap {
@@ -301,7 +302,17 @@ func (bc *Blockchain) estimateFee(tx Transaction, congestion int) uint64 {
 	if congestionFactor > 10 {
 		congestionFactor = 10
 	}
-	baseFee := BaseFee + (baseComplexity * FeeMultiplier) + congestionFactor
+	agentBaseDemand := uint64(1000000)
+	agentGrowth := float64(0.05)
+	_ = agentBaseDemand + uint64(float64(agentBaseDemand)*agentGrowth*float64(bc.AgentTxCount))
+	demandFactor := uint64(0)
+	if bc.AgentTxCount > 0 && bc.TokenSupply > 0 {
+		demandFactor = uint64(float64(bc.AgentTxCount) / float64(bc.TokenSupply) * 1_000_000_000)
+		if demandFactor > 200 {
+			demandFactor = 200
+		}
+	}
+	baseFee := BaseFee + (baseComplexity * FeeMultiplier) + congestionFactor + demandFactor
 	if bc.TokenSupply > 0 {
 		if bc.TokenSupply < 1_000_000 {
 			baseFee += 2
@@ -332,6 +343,50 @@ func (bc *Blockchain) Burn(amount uint64) {
 		amount = bc.TokenSupply
 	}
 	bc.TokenSupply -= amount
+}
+
+func (bc *Blockchain) RegisterModel(owner, id, version, metadata string, pricePerCall uint64, active bool) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	bc.Registry[id] = ModelEntry{
+		ID:           id,
+		Owner:        owner,
+		Version:      version,
+		Metadata:     metadata,
+		PricePerCall: pricePerCall,
+		Active:       active,
+	}
+	bc.appendAuditEntry("model_registered", owner, fmt.Sprintf("model_id=%s price=%d", id, pricePerCall))
+	bc.AgentTxCount++
+}
+
+func (bc *Blockchain) UpdateModel(owner, id, version, metadata string, pricePerCall uint64) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	entry := bc.Registry[id]
+	entry.Version = version
+	entry.Metadata = metadata
+	entry.PricePerCall = pricePerCall
+	bc.Registry[id] = entry
+	bc.appendAuditEntry("model_updated", owner, fmt.Sprintf("model_id=%s price=%d", id, pricePerCall))
+	bc.AgentTxCount++
+}
+
+func (bc *Blockchain) PurchaseApiKey(buyer, modelID string, amount uint64) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	entry, exists := bc.Registry[modelID]
+	if !exists {
+		return
+	}
+	sender, senderExists := bc.Ledger[buyer]
+	receiver, receiverExists := bc.Ledger[entry.Owner]
+	if senderExists && receiverExists && sender.Balance >= amount {
+		sender.Balance -= amount
+		receiver.Balance += amount
+		bc.appendAuditEntry("api_key_purchased", buyer, fmt.Sprintf("model_id=%s amount=%d", modelID, amount))
+		bc.AgentTxCount++
+	}
 }
 
 func (bc *Blockchain) CreateEscrow(from, to string, amount uint64, serviceID string) (Escrow, error) {
@@ -742,12 +797,14 @@ func (bc *Blockchain) applyBlock(block Block) {
 				PricePerCall: tx.Amount,
 				Active:       true,
 			}
+			bc.AgentTxCount++
 		case UpdateModel:
 			entry := bc.Registry[tx.To]
 			entry.Version = tx.Payload
 			entry.Metadata = tx.Payload
 			entry.PricePerCall = tx.Amount
 			bc.Registry[tx.To] = entry
+			bc.AgentTxCount++
 		case PurchaseApiKey:
 			entry := bc.Registry[tx.To]
 			sender := bc.Ledger[tx.From]
@@ -756,6 +813,7 @@ func (bc *Blockchain) applyBlock(block Block) {
 				sender.Balance -= tx.Amount
 				receiver.Balance += tx.Amount
 			}
+			bc.AgentTxCount++
 		}
 	}
 }

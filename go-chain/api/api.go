@@ -391,6 +391,92 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		defer chain.RUnlock()
 		_ = json.NewEncoder(w).Encode(chain.Registry)
 	})
+	mux.HandleFunc("/api/registry/register", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if !limiter.allow(r.RemoteAddr) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			ID           string `json:"id"`
+			Owner        string `json:"owner"`
+			Version      string `json:"version"`
+			Metadata     string `json:"metadata"`
+			PricePerCall uint64 `json:"price_per_call"`
+			Active       bool   `json:"active"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		chain.RegisterModel(payload.Owner, payload.ID, payload.Version, payload.Metadata, payload.PricePerCall, payload.Active)
+		_ = chain.SaveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "registered", "id": payload.ID})
+	})
+	mux.HandleFunc("/api/registry/update", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if !limiter.allow(r.RemoteAddr) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			ID          string `json:"id"`
+			Owner       string `json:"owner"`
+			Version     string `json:"version"`
+			Metadata    string `json:"metadata"`
+			PricePerCall uint64 `json:"price_per_call"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		chain.UpdateModel(payload.Owner, payload.ID, payload.Version, payload.Metadata, payload.PricePerCall)
+		_ = chain.SaveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "updated", "id": payload.ID})
+	})
+	mux.HandleFunc("/api/registry/purchase", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if !limiter.allow(r.RemoteAddr) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Buyer  string `json:"buyer"`
+			ModelID string `json:"model_id"`
+			Amount  uint64 `json:"amount"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		chain.PurchaseApiKey(payload.Buyer, payload.ModelID, payload.Amount)
+		_ = chain.SaveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "purchased", "model_id": payload.ModelID})
+	})
 	mux.HandleFunc("/api/accounts", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		chain.RLock()
@@ -621,14 +707,42 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		w.Header().Set("Content-Type", "application/json")
 		chain.RLock()
 		defer chain.RUnlock()
+		agentBaseDemand := uint64(1000000)
+		agentGrowth := 0.05
+		agentDemand := agentBaseDemand + uint64(float64(agentBaseDemand)*agentGrowth*float64(chain.AgentTxCount))
+		demandFactor := uint64(0)
+		if chain.AgentTxCount > 0 && chain.TokenSupply > 0 {
+			demandFactor = uint64(float64(chain.AgentTxCount) / float64(chain.TokenSupply) * 1_000_000_000)
+			if demandFactor > 200 {
+				demandFactor = 200
+			}
+		}
+		deflPressure := 0.0
+		if chain.TokenSupply > 0 {
+			if chain.TokenSupply > 5000000000 {
+				deflPressure = float64(blockchain.BurnRatePercent) * 1.5
+			} else {
+				deflPressure = float64(blockchain.BurnRatePercent)
+			}
+		}
+		humanScore := 0.0
+		if deflPressure > 0 {
+			humanScore = float64(agentDemand) / deflPressure
+		} else if agentDemand > 0 {
+			humanScore = float64(agentDemand)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"currency":            blockchain.CurrencySymbol(),
-			"token_supply":        chain.TokenSupply,
-			"burn_rate_percent":   blockchain.BurnRatePercent,
-			"reward_rate_percent": blockchain.RewardRatePercent,
-			"base_fee":            blockchain.BaseFee,
-			"escrows":             chain.Escrows,
-			"proposals":           chain.Proposals,
+			"currency":              blockchain.CurrencySymbol(),
+			"token_supply":          chain.TokenSupply,
+			"burn_rate_percent":     blockchain.BurnRatePercent,
+			"reward_rate_percent":   blockchain.RewardRatePercent,
+			"base_fee":              blockchain.BaseFee,
+			"escrows":               chain.Escrows,
+			"proposals":             chain.Proposals,
+			"agent_tx_count":        chain.AgentTxCount,
+			"agent_demand_pressure": agentDemand,
+			"deflationary_pressure": deflPressure,
+			"human_value_score":     humanScore,
 		})
 	})
 	blockchain.LogJSON("api_listen", "node", fmt.Sprintf("port=%d", port))
