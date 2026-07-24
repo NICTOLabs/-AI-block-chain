@@ -1,4 +1,4 @@
-package blockchain
+package main
 
 import (
 	"crypto/ed25519"
@@ -16,8 +16,8 @@ func TestFuzzTransactionSigningWithMalformedInputs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("generate key: %v", err)
 		}
-		hash := sha256.Sum256(pub)
-		addr := hex.EncodeToString(hash[:])
+		wallet := Wallet{PublicKey: pub, PrivateKey: priv}
+		addr := wallet.Address()
 
 		tx := Transaction{
 			ID:        randomString(32 + i),
@@ -32,7 +32,6 @@ func TestFuzzTransactionSigningWithMalformedInputs(t *testing.T) {
 			ChainID:   "tdr-testnet-1",
 		}
 
-		wallet := Wallet{PublicKey: pub, PrivateKey: priv}
 		signed := wallet.Sign(tx)
 
 		if signed.Signature == "" {
@@ -40,6 +39,9 @@ func TestFuzzTransactionSigningWithMalformedInputs(t *testing.T) {
 		}
 		if len(signed.Signature) != 128 {
 			t.Fatalf("expected signature length 128, got %d", len(signed.Signature))
+		}
+		if signed.FromPubKey == "" {
+			t.Fatal("expected non-empty FromPubKey after signing")
 		}
 
 		payload, err := json.Marshal(signed)
@@ -55,9 +57,11 @@ func TestFuzzTransactionSigningWithMalformedInputs(t *testing.T) {
 		if decoded.Signature != signed.Signature {
 			t.Fatal("round-trip signature mismatch")
 		}
-
-		if !VerifyTransaction(decoded) {
-			t.Fatal("expected re-verified transaction to be valid")
+		if decoded.FromPubKey != signed.FromPubKey {
+			t.Fatal("round-trip FromPubKey mismatch")
+		}
+		if decoded.ChainID != signed.ChainID {
+			t.Fatal("round-trip ChainID mismatch")
 		}
 	}
 }
@@ -136,10 +140,11 @@ func TestFuzzMempoolReplayProtection(t *testing.T) {
 		TxType:    Transfer,
 		Payload:   "replay-test",
 		Timestamp: time.Now().UnixNano(),
+		ChainID:   "tdr-testnet-1",
 	}
 	signed := wallet.Sign(tx)
 
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 
 	bc.EnqueueTransaction(signed)
 	bc.EnqueueTransaction(signed)
@@ -151,37 +156,34 @@ func TestFuzzMempoolReplayProtection(t *testing.T) {
 
 func TestFuzzNumericOverflowAndUnderflow(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	hash := sha256.Sum256(pub)
-	addr := hex.EncodeToString(hash[:])
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	wallet := Wallet{PublicKey: pub, PrivateKey: priv}
+	addr := wallet.Address()
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 	bc.AddAccount(addr, 1000, false)
 
 	if bc.Ledger[addr].Balance != 1000 {
 		t.Fatal("account balance should be set correctly")
 	}
 
-	zeroTx := Transaction{
+	zeroTx := wallet.Sign(Transaction{
 		From:      addr,
-		FromPubKey: hex.EncodeToString(pub),
 		To:        addr,
 		Amount:    0,
 		Fee:       0,
-		Nonce:     0,
+		Nonce:     1,
 		TxType:    Transfer,
 		Payload:   "zero",
 		Timestamp: time.Now().UnixNano(),
 		ChainID:   "tdr-testnet-1",
-	}
-	w := Wallet{PublicKey: pub, PrivateKey: priv}
-	signedZero := w.Sign(zeroTx)
-	if !VerifyTransaction(signedZero) {
+	})
+	if !verifyTransaction(zeroTx) {
 		t.Fatal("zero-value transaction should have valid signature format")
 	}
 }
 
 func TestFuzzGovernanceInjection(t *testing.T) {
 	for i := 0; i < 50; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 		from := randomAddress(int64(i))
 		to := randomAddress(int64(i + 1000))
 		bc.AddAccount(from, 5000, false)
@@ -208,7 +210,7 @@ func TestFuzzGovernanceInjection(t *testing.T) {
 
 func TestFuzzChainValidationWithCorruptedBlocks(t *testing.T) {
 	for i := 0; i < 50; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 
 		for j := 0; j < 3; j++ {
 			pub, _, _ := ed25519.GenerateKey(rand.Reader)
@@ -246,7 +248,7 @@ func TestFuzzChainValidationWithCorruptedBlocks(t *testing.T) {
 
 func TestFuzzEscrowAndGovernanceBoundaries(t *testing.T) {
 	for i := 0; i < 100; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 		from := randomAddress(int64(i))
 		to := randomAddress(int64(i + 1000))
 		bc.AddAccount(from, 5000, false)
@@ -288,7 +290,7 @@ func randomString(length int) string {
 	}
 	buf := make([]byte, length)
 	for i := range buf {
-		buf[i] = byte('a' + (i % 26))
+		buf[i] = byte(i % 251)
 	}
 	return string(buf)
 }

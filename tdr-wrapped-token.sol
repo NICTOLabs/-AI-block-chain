@@ -9,11 +9,16 @@ contract TDRWrapped is ERC20, Ownable {
         _mint(msg.sender, 1_000_000_000 * 10**decimals());
     }
 
-    function mint(address to, uint256 amount) public onlyOwner {
+    function mint(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
+        emit Mint(to, amount);
     }
 
-    function burn(address from, uint256 amount) public onlyOwner {
+    function burn(address from, uint256 amount) external onlyOwner {
         _burn(from, amount);
+        emit Burn(from, amount);
     }
+
+    event Mint(address indexed to, uint256 amount);
+    event Burn(address indexed from, uint256 amount);
 }

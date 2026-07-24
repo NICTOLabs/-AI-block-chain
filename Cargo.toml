@@ -3,6 +3,7 @@ members = [
   "consensus",
   "agent-protocol",
   "contracts",
-  "sdk/rust"
+  "sdk/rust",
+  "rust-chain",
 ]
 resolver = "2"

@@ -14,7 +14,7 @@ This project is a production-oriented blockchain platform built from scratch to 
 
 The chain uses a hybrid consensus design:
 
-- Proof-of-Stake (PoS): token holders may stake to secure the network and earn fees
+- Proof-of-Stake (PoS): token holders may stake to secure the network and earn fees, with slashing and reward distribution for validator participation
 - Proof-of-Authority (PoA): a trusted authority set validates critical state transitions for AI registry and agent onboarding
 
 This hybrid approach allows the chain to support both decentralization and deterministic governance for AI agent identity and registry operations.

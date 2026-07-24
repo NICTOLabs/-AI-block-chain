@@ -25,6 +25,11 @@ contract WTDR is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ReentrancyG
     uint256 public constant MAX_SUPPLY = 10_000_000_000 * 10**8;
     uint256 public totalMinted;
 
+    struct BridgeProof {
+        address from;
+        uint256 amount;
+    }
+
     constructor(
         string memory name,
         string memory symbol,
@@ -91,15 +96,14 @@ contract WTDR is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ReentrancyG
     function bridgeLock(bytes32 sourceTxHash, bytes calldata sourceTxProof) external onlyBridge nonReentrant returns (bool) {
         require(!processedBridges[sourceTxHash], "WTDR: bridge tx already processed");
 
-        address from = abi.decode(sourceTxProof, (address));
-        uint256 amount = abi.decode(sourceTxProof[32:], (uint256));
+        BridgeProof memory proof = abi.decode(sourceTxProof, (BridgeProof));
 
         processedBridges[sourceTxHash] = true;
 
-        uint256 lockedBalance = nodeBalances[from] + amount;
-        nodeBalances[from] = lockedBalance;
+        uint256 lockedBalance = nodeBalances[proof.from] + proof.amount;
+        nodeBalances[proof.from] = lockedBalance;
 
-        emit BridgeLock(from, amount, sourceTxHash);
+        emit BridgeLock(proof.from, proof.amount, sourceTxHash);
         return true;
     }
 

@@ -124,15 +124,15 @@ func main() {
 	}
 
 	manifestPath := filepath.Join(outDir, "validator_manifest.json")
-	writeJSON(manifestPath, manifest)
+	writeJSON(manifestPath, manifest, 0o644)
 
 	keyPath := filepath.Join(outDir, "validator.key.json")
-	writeJSON(keyPath, identity)
+	writeJSON(keyPath, identity, 0o600)
 
 	publicIdentity := identity
 	publicIdentity.PrivateKey = ""
 	publicPath := filepath.Join(outDir, "validator.public.json")
-	writeJSON(publicPath, publicIdentity)
+	writeJSON(publicPath, publicIdentity, 0o644)
 
 	envContent := fmt.Sprintf(`TENDER_VALIDATOR_NAME=%s
 TENDER_VALIDATOR_ADDRESS=%s
@@ -169,7 +169,7 @@ TENDER_TELEMETRY_ENDPOINT=%s
 	}
 
 	telemetryPath := filepath.Join(outDir, "telemetry_payload.json")
-	writeJSON(telemetryPath, telemetryPayload)
+	writeJSON(telemetryPath, telemetryPayload, 0o644)
 
 	fmt.Printf("validator identity generated successfully\n")
 	fmt.Printf("  address:         %s\n", identity.Address)
@@ -191,12 +191,12 @@ func detectLocalAddress() (string, error) {
 	return localAddr.IP.String(), nil
 }
 
-func writeJSON(path string, v any) {
+func writeJSON(path string, v any, perm os.FileMode) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		panic(err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, perm); err != nil {
 		panic(err)
 	}
 }
@@ -288,8 +288,8 @@ func runInteractive() {
 		TelemetryURL: telemetry,
 	}
 
-	writeJSON(filepath.Join(outDir, "validator_manifest.json"), manifest)
-	writeJSON(filepath.Join(outDir, "validator.key.json"), identity)
+	writeJSON(filepath.Join(outDir, "validator_manifest.json"), manifest, 0o644)
+	writeJSON(filepath.Join(outDir, "validator.key.json"), identity, 0o600)
 
 	fmt.Printf("\nValidator registered at %s\n", outDir)
 	fmt.Printf("Address: %s\n", address)

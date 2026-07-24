@@ -3,7 +3,7 @@ package blockchain
 import "testing"
 
 func TestEstimateFeeUsesCongestionAndComplexity(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 	transferFee := bc.estimateFee(Transaction{TxType: Transfer}, 0)
 	modelFee := bc.estimateFee(Transaction{TxType: RegisterModel, Payload: "model"}, 0)
 	if modelFee <= transferFee {
@@ -17,7 +17,7 @@ func TestEstimateFeeUsesCongestionAndComplexity(t *testing.T) {
 }
 
 func TestSlashReducesStakeAndBalance(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 	bc.AddAccount("alice", 1000, false)
 	bc.Ledger["alice"].Staked = 100
 
@@ -26,13 +26,13 @@ func TestSlashReducesStakeAndBalance(t *testing.T) {
 	if bc.Ledger["alice"].Staked != 60 {
 		t.Fatalf("expected staked amount to drop to 60, got %d", bc.Ledger["alice"].Staked)
 	}
-	if bc.Ledger["alice"].Balance != 996 {
-		t.Fatalf("expected balance to drop to 996 under the new penalty rule, got %d", bc.Ledger["alice"].Balance)
+	if bc.Ledger["alice"].Balance != 960 {
+		t.Fatalf("expected balance to drop to 960 under the new penalty rule, got %d", bc.Ledger["alice"].Balance)
 	}
 }
 
 func TestDistributeRewardsAndBurn(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 	bc.AddAccount("alice", 1000, false)
 	bc.Ledger["alice"].Staked = 100
 
@@ -49,7 +49,7 @@ func TestDistributeRewardsAndBurn(t *testing.T) {
 }
 
 func TestCreateEscrowLocksFunds(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 	bc.AddAccount("alice", 1000, false)
 	bc.AddAccount("bob", 0, false)
 

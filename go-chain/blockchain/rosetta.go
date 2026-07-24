@@ -2,6 +2,7 @@ package blockchain
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -349,14 +350,16 @@ func checkRosettaTxBalance(bc *Blockchain, from string, amount uint64) bool {
 }
 
 func validateRosettaSignature(tx Transaction, pubHex, sigHex string) bool {
-	pub, err := hex.DecodeString(pubHex)
-	if err != nil {
+	pubBytes, err := hex.DecodeString(pubHex)
+	if err != nil || len(pubBytes) != ed25519.PublicKeySize {
 		return false
 	}
-	_ = sigHex
+	sigBytes, err := hex.DecodeString(sigHex)
+	if err != nil || len(sigBytes) != ed25519.SignatureSize {
+		return false
+	}
 	raw, _ := json.Marshal(tx)
-	sum := sha256.Sum256(raw)
-	return bytes.Equal(sum[:], pub)
+	return ed25519.Verify(ed25519.PublicKey(pubBytes), raw, sigBytes)
 }
 
 func rosettaTxToCanonicalJSON(tx Transaction) string {

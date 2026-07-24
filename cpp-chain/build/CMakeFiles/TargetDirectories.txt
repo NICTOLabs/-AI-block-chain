@@ -1,3 +1,0 @@
-/workspaces/-AI-block-chain/cpp-chain/build/CMakeFiles/ai_block_chain_cpp.dir
-/workspaces/-AI-block-chain/cpp-chain/build/CMakeFiles/edit_cache.dir
-/workspaces/-AI-block-chain/cpp-chain/build/CMakeFiles/rebuild_cache.dir

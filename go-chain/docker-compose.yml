@@ -2,8 +2,8 @@ version: "3.9"
 services:
   tender-node:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: go-chain/Dockerfile
     ports:
       - "8080:8080"
       - "3030:3030"

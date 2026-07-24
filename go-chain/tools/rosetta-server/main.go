@@ -1,133 +1,117 @@
 package main
 
 import (
-	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/gorilla/mux"
 )
 
+type Transaction struct {
+	ID         string `json:"id,omitempty"`
+	From       string `json:"from"`
+	FromPubKey string `json:"from_pubkey"`
+	To         string `json:"to"`
+	Amount     uint64 `json:"amount"`
+	Fee        uint64 `json:"fee,omitempty"`
+	Nonce      uint64 `json:"nonce,omitempty"`
+	TxType     string `json:"tx_type"`
+	Payload    string `json:"payload,omitempty"`
+	Signature  string `json:"signature,omitempty"`
+	Timestamp  int64  `json:"timestamp"`
+	ChainID    string `json:"chain_id,omitempty"`
+}
+
+type Block struct {
+	Index        uint64        `json:"index"`
+	Author       string        `json:"author"`
+	PreviousHash string        `json:"previous_hash"`
+	Timestamp    int64         `json:"timestamp"`
+	Transactions []Transaction `json:"transactions"`
+	Nonce        uint64        `json:"nonce"`
+	BlockHash    string        `json:"block_hash"`
+}
+
+type nodeState struct {
+	Chain       []Block       `json:"chain"`
+	Pending     []Transaction `json:"pending"`
+	ChainID     string        `json:"chain_id"`
+	TokenSupply uint64        `json:"token_supply"`
+}
+
 type RosettaServer struct {
-	chain *Blockchain
+	state *nodeState
 	port  string
 }
 
-func NewRosettaServer(chain *Blockchain, port string) *RosettaServer {
-	return &RosettaServer{chain: chain, port: port}
+func NewRosettaServer(state *nodeState, port string) *RosettaServer {
+	return &RosettaServer{state: state, port: port}
 }
 
 func (s *RosettaServer) Start() {
-	r := mux.NewRouter()
-	r.HandleFunc("/network/status", s.networkStatus).Methods("GET")
-	r.HandleFunc("/block", s.blockByIndex).Methods("GET")
-	r.HandleFunc("/construction/submit", s.constructionSubmit).Methods("POST")
-	r.HandleFunc("/health", s.health).Methods("GET")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/network/status", s.networkStatus)
+	mux.HandleFunc("/block/", s.blockByIndex)
+	mux.HandleFunc("/construction/submit", s.constructionSubmit)
+	mux.HandleFunc("/health", s.health)
 
 	server := &http.Server{
 		Addr:         ":" + s.port,
-		Handler:      r,
+		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
 	}
 
-	go func() {
-		log.Printf("Rosetta server listening on :%s", s.port)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("rosetta server error: %v", err)
-		}
-	}()
-}
-
-func (s *RosettaServer) Stop(ctx context.Context) {
-	_ = http.NewRequest("POST", "http://localhost"+s.port+"/shutdown", nil)
-}
-
-type RosettaNetworkStatusResponse struct {
-	CurrentBlockIdentifier struct {
-		Index int64  `json:"index"`
-		Hash  string `json:"hash"`
-	} `json:"current_block_identifier"`
-	OldestBlockIdentifier struct {
-		Index int64  `json:"index"`
-		Hash  string `json:"hash"`
-	} `json:"oldest_block_identifier"`
-	GenesisBlockIdentifier struct {
-		Index int64  `json:"index"`
-		Hash  string `json:"hash"`
-	} `json:"genesis_block_identifier"`
-	CurrentBlockTimestamp int64 `json:"current_block_timestamp"`
-	Peers                []string `json:"peers"`
+	log.Printf("Rosetta server listening on :%s", s.port)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("rosetta server error: %v", err)
+	}
 }
 
 func (s *RosettaServer) networkStatus(w http.ResponseWriter, r *http.Request) {
-	s.chain.mu.RLock()
-	defer s.chain.mu.RUnlock()
-	resp := RosettaNetworkStatusResponse{}
-	if len(s.chain.Chain) > 0 {
-		resp.GenesisBlockIdentifier.Index = 0
-		resp.GenesisBlockIdentifier.Hash = s.chain.Chain[0].BlockHash
-		resp.OldestBlockIdentifier = resp.GenesisBlockIdentifier
-		last := s.chain.Chain[len(s.chain.Chain)-1]
-		resp.CurrentBlockIdentifier.Index = int64(last.Index)
-		resp.CurrentBlockIdentifier.Hash = last.BlockHash
-		resp.CurrentBlockTimestamp = last.Timestamp
+	resp := map[string]any{
+		"current_block_identifier": map[string]any{"index": 0, "hash": "genesis"},
+		"oldest_block_identifier":  map[string]any{"index": 0, "hash": "genesis"},
+		"genesis_block_identifier": map[string]any{"index": 0, "hash": "genesis"},
+		"current_block_timestamp":  time.Now().Unix(),
+		"peers":                    []string{},
 	}
-	resp.Peers = []string{}
+	if len(s.state.Chain) > 0 {
+		last := s.state.Chain[len(s.state.Chain)-1]
+		resp["current_block_identifier"] = map[string]any{"index": last.Index, "hash": last.BlockHash}
+		resp["current_block_timestamp"] = last.Timestamp
+	}
+	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-type RosettaBlockResponse struct {
-	Block struct {
-		BlockIdentifier       map[string]any `json:"block_identifier"`
-		ParentBlockIdentifier map[string]any `json:"parent_block_identifier"`
-		Timestamp             int64          `json:"timestamp"`
-		Transactions          []map[string]any `json:"transactions"`
-	} `json:"block"`
-}
-
 func (s *RosettaServer) blockByIndex(w http.ResponseWriter, r *http.Request) {
-	indexStr := r.URL.Query().Get("block_index")
-	if indexStr == "" {
-		http.Error(w, "missing block_index", http.StatusBadRequest)
+	path := r.URL.Path[len("/block/"):]
+	if path == "" {
+		http.Error(w, "missing block index", http.StatusBadRequest)
 		return
 	}
 	var targetIndex uint64
-	if _, err := fmt.Sscanf(indexStr, "%d", &targetIndex); err != nil {
-		http.Error(w, "invalid block_index", http.StatusBadRequest)
+	if _, err := fmt.Sscanf(path, "%d", &targetIndex); err != nil {
+		http.Error(w, "invalid block index", http.StatusBadRequest)
 		return
 	}
-	s.chain.mu.RLock()
-	defer s.chain.mu.RUnlock()
-	for _, block := range s.chain.Chain {
+	for _, block := range s.state.Chain {
 		if block.Index == targetIndex {
-			resp := RosettaBlockResponse{}
-			resp.Block.BlockIdentifier = map[string]any{"index": block.Index, "hash": block.BlockHash}
-			resp.Block.ParentBlockIdentifier = map[string]any{"index": block.Index - 1, "hash": block.PreviousHash}
-			resp.Block.Timestamp = block.Timestamp
-			for _, tx := range block.Transactions {
-				resp.Block.Transactions = append(resp.Block.Transactions, map[string]any{
-					"transaction_identifier": map[string]any{"hash": tx.ID},
-					"operations": []map[string]any{{
-						"operation_identifier": map[string]any{"index": 0},
-						"type": "TRANSFER",
-						"status": "SUCCESS",
-						"account": map[string]any{"address": tx.From},
-						"amount": map[string]any{"value": fmt.Sprintf("-%d", tx.Amount), "currency": map[string]any{"symbol": "TDR", "decimals": 8}},
-					}, {
-						"operation_identifier": map[string]any{"index": 1},
-						"type": "TRANSFER",
-						"status": "SUCCESS",
-						"account": map[string]any{"address": tx.To},
-						"amount": map[string]any{"value": fmt.Sprintf("%d", tx.Amount), "currency": map[string]any{"symbol": "TDR", "decimals": 8}},
-					}},
-				})
+			resp := map[string]any{
+				"block": map[string]any{
+					"block_identifier":       map[string]any{"index": block.Index, "hash": block.BlockHash},
+					"parent_block_identifier": map[string]any{"index": block.Index - 1, "hash": block.PreviousHash},
+					"timestamp":              block.Timestamp,
+					"transactions":           block.Transactions,
+				},
 			}
+			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
@@ -135,23 +119,14 @@ func (s *RosettaServer) blockByIndex(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "block not found", http.StatusNotFound)
 }
 
-type RosettaConstructionSubmitRequest struct {
-	Transaction string `json:"transaction"`
-	PublicKeys  []struct {
-		Bytes     string `json:"bytes"`
-		CurveType string `json:"curve_type"`
-	} `json:"public_keys"`
-}
-
-type RosettaConstructionSubmitResponse struct {
-	TransactionIdentifier struct {
-		Hash string `json:"hash"`
-	} `json:"transaction_identifier"`
-	Status map[string]string `json:"status"`
-}
-
 func (s *RosettaServer) constructionSubmit(w http.ResponseWriter, r *http.Request) {
-	var req RosettaConstructionSubmitRequest
+	var req struct {
+		Transaction string `json:"transaction"`
+		Network     struct {
+			Blockchain string `json:"blockchain"`
+			Network    string `json:"network"`
+		} `json:"network_identifier"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -166,14 +141,13 @@ func (s *RosettaServer) constructionSubmit(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	tx.ID = fmt.Sprintf("tx-%d", time.Now().UnixNano())
-	s.chain.mu.Lock()
-	s.chain.Pending = append(s.chain.Pending, tx)
-	s.chain.mu.Unlock()
-	h := sha256.Sum256([]byte(tx.ID + s.chain.ChainID))
-	resp := RosettaConstructionSubmitResponse{
-		TransactionIdentifier: struct{ Hash string }{Hash: hex.EncodeToString(h[:])},
-		Status:                map[string]string{"accepted": "true"},
+	s.state.Pending = append(s.state.Pending, tx)
+	txHash := sha256.Sum256([]byte(tx.ID + req.Network.Network))
+	resp := map[string]any{
+		"transaction_identifier": map[string]any{"hash": hex.EncodeToString(txHash[:])},
+		"status":                 map[string]any{"accepted": true},
 	}
+	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
@@ -183,4 +157,50 @@ func (s *RosettaServer) health(w http.ResponseWriter, r *http.Request) {
 		"service":   "rosetta",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+func verifyTransaction(tx Transaction) bool {
+	if tx.ChainID == "" {
+		return false
+	}
+	pubKey, err := hex.DecodeString(tx.FromPubKey)
+	if err != nil || len(pubKey) != ed25519.PublicKeySize {
+		return false
+	}
+	addressBytes := sha256.Sum256(pubKey)
+	if tx.From != hex.EncodeToString(addressBytes[:]) {
+		return false
+	}
+	sig, err := hex.DecodeString(tx.Signature)
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return false
+	}
+	payload := tx
+	payload.Signature = ""
+	payload.ID = ""
+	data, _ := json.Marshal(payload)
+	return ed25519.Verify(ed25519.PublicKey(pubKey), data, sig)
+}
+
+func main() {
+	port := "8083"
+	if p := os.Getenv("ROSETTA_PORT"); p != "" {
+		port = p
+	}
+
+	statePath := ""
+	if s := os.Getenv("CHAIN_STATE_PATH"); s != "" {
+		statePath = s
+	}
+
+	state := &nodeState{ChainID: "tdr-mainnet-1"}
+	if statePath != "" {
+		data, err := os.ReadFile(statePath)
+		if err == nil {
+			_ = json.Unmarshal(data, state)
+		}
+	}
+
+	server := NewRosettaServer(state, port)
+	server.Start()
 }
