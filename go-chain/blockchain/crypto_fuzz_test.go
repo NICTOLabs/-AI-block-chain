@@ -1,4 +1,4 @@
-package main
+package blockchain
 
 import (
 	"crypto/ed25519"
@@ -56,7 +56,7 @@ func TestFuzzTransactionSigningWithMalformedInputs(t *testing.T) {
 			t.Fatal("round-trip signature mismatch")
 		}
 
-		if !verifyTransaction(decoded) {
+		if !VerifyTransaction(decoded) {
 			t.Fatal("expected re-verified transaction to be valid")
 		}
 	}
@@ -174,7 +174,7 @@ func TestFuzzNumericOverflowAndUnderflow(t *testing.T) {
 	}
 	w := Wallet{PublicKey: pub, PrivateKey: priv}
 	signedZero := w.Sign(zeroTx)
-	if !verifyTransaction(signedZero) {
+	if !VerifyTransaction(signedZero) {
 		t.Fatal("zero-value transaction should have valid signature format")
 	}
 }

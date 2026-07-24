@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"os"
@@ -28,7 +28,7 @@ func TestServerConfigFromEnvUsesDefaultsAndOverrides(t *testing.T) {
 	defer os.Unsetenv("TENDER_CONSENSUS")
 	defer os.Unsetenv("TENDER_STRICT_P2P")
 
-	cfg := serverConfigFromEnv()
+	cfg := ServerConfigFromEnv()
 
 	if cfg.APIKey != "env-key" {
 		t.Fatalf("expected API key from env, got %q", cfg.APIKey)
@@ -67,7 +67,7 @@ func TestServerConfigFromEnvUsesDefaultsWhenUnset(t *testing.T) {
 		os.Unsetenv(key)
 	}
 
-	cfg := serverConfigFromEnv()
+	cfg := ServerConfigFromEnv()
 
 	if cfg.APIKey == "" {
 		t.Fatal("expected default API key to be set")
