@@ -539,7 +539,20 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		balance := chain.Ledger[payload.Address].Balance
 		chain.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": amount, "balance": balance})
+		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": amount, "amount_formatted": blockchain.FormatAmount(amount), "balance": balance, "balance_formatted": blockchain.FormatAmount(balance)})
+	})
+	mux.HandleFunc("/api/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"currency_name":      blockchain.CurrencyName,
+			"currency_symbol":    blockchain.CurrencySymbol(),
+			"currency_subunit":   blockchain.CurrencySubunit,
+			"subunit_factor":     blockchain.HogohogoPerTender,
+			"base_fee":           blockchain.BaseFee,
+			"base_fee_formatted": blockchain.FormatAmount(blockchain.BaseFee),
+			"burn_rate_percent":  blockchain.BurnRatePercent,
+			"reward_rate_percent": blockchain.RewardRatePercent,
+		})
 	})
 	mux.HandleFunc("/api/managed-wallets", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
