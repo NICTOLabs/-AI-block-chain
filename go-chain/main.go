@@ -49,6 +49,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -1296,7 +1297,7 @@ func main() {
 	go p2p.connectToPeers()
 	go startAPI(chain, envCfg.APIPort, p2p, envCfg)
 
-	log.Printf("{\"event\":\"node_start\",\"currency\":\"%s\",\"api_port\":%d,\"p2p_port\":%d,\"consensus\":\"%s\",\"chain_id\":\"%s\"}", CurrencyName, envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus, *chainID)
+	logJSON("node_start", "node", fmt.Sprintf("currency=%s api_port=%d p2p_port=%d consensus=%s chain_id=%s", CurrencyName, envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus, *chainID))
 	<-p2p.shutdown
 }
 
@@ -1675,16 +1676,39 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 	_, _ = fmt.Fprintf(w, "# TYPE tender_tx_rejected_total counter\n")
 	_, _ = fmt.Fprintf(w, "tender_tx_rejected_total %d\n", atomic.LoadInt64(&metrics.txRejected))
 	})
-	log.Printf("{\"event\":\"api_listen\",\"port\":%d}", port)
-	if err := http.ListenAndServe(":"+strconv.Itoa(port), mux); err != nil {
+	logJSON("api_listen", "node", fmt.Sprintf("port=%d", port))
+	if err := http.ListenAndServe(":"+strconv.Itoa(port), requestIDMiddleware(mux)); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func newRequestID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+func logJSON(event, actor, details string) {
+	line := fmt.Sprintf("{\"ts\":%d,\"event\":\"%s\",\"actor\":\"%s\",\"details\":\"%s\"}", time.Now().Unix(), event, actor, details)
+	fmt.Println(line)
+}
+
+func requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("X-Request-ID")
+		if id == "" {
+			id = newRequestID()
+		}
+		w.Header().Set("X-Request-ID", id)
+		ctx := context.WithValue(r.Context(), "request_id", id)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 func (p2p *P2PNode) start() {
 	listener, err := net.Listen("tcp", p2p.addr)
 	if err != nil {
-		log.Printf("p2p listen: %v", err)
+		logJSON("p2p_listen_failed", p2p.addr, err.Error())
 		return
 	}
 	p2p.listener = listener
@@ -1696,7 +1720,7 @@ func (p2p *P2PNode) start() {
 			case <-p2p.shutdown:
 				return
 			default:
-				log.Printf("{\"event\":\"accept_error\",\"error\":\"%v\"}", err)
+				logJSON("p2p_accept_error", p2p.addr, err.Error())
 			}
 			continue
 		}
@@ -1714,10 +1738,11 @@ func (p2p *P2PNode) connectToPeers() {
 		}
 		go func(target string) {
 			conn, err := net.Dial("tcp", target)
-			if err != nil {
-				log.Printf("{\"event\":\"connect_peer\",\"peer\":\"%s\",\"error\":\"%v\"}", target, err)
-				return
-			}
+		if err != nil {
+			logJSON("connect_peer", target, err.Error())
+			return
+		}
+
 			defer conn.Close()
 			p2p.peerScores[target] = 1
 			p2p.trustedPeers[target] = true
@@ -1735,7 +1760,7 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("{\"event\":\"p2p_read\",\"error\":\"%v\"}", err)
+				logJSON("p2p_read", remote, err.Error())
 			}
 			return
 		}
@@ -1744,12 +1769,12 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 			continue
 		}
 		if len(line) > 5*1024*1024 {
-			log.Printf("{\"event\":\"p2p_oversize\",\"peer\":\"%s\"}", remote)
+			logJSON("p2p_oversize", remote, "")
 			return
 		}
 		var msg p2pMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			log.Printf("{\"event\":\"p2p_decode\",\"error\":\"%v\"}", err)
+			logJSON("p2p_decode", remote, err.Error())
 			return
 		}
 		if msg.Type == "block" && msg.Block != nil {
@@ -1791,10 +1816,11 @@ func (p2p *P2PNode) broadcastBlock(block *Block) {
 			continue
 		}
 		conn, err := net.Dial("tcp", peer)
-		if err != nil {
-			log.Printf("{\"event\":\"broadcast\",\"peer\":\"%s\",\"error\":\"%v\"}", peer, err)
-			continue
-		}
+			if err != nil {
+				logJSON("broadcast", peer, err.Error())
+				continue
+			}
+
 		_, _ = conn.Write(append(payload, '\n'))
 		conn.Close()
 	}
