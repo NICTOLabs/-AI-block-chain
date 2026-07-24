@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -93,6 +94,11 @@ const (
 	MaxSupply         uint64 = 18_446_744_073_709_551_615
 	InitialSupply     uint64 = 4_500_000_000
 	BlockRewardBase   uint64 = 10
+
+	AlucardBaseEmission uint64 = 2
+	AlucardBonusStart   uint64 = 8
+	AlucardDecayFactor  uint64 = 70
+	AlucardCycleBlocks  uint64 = 157_788_000
 )
 
 type Escrow struct {
@@ -617,6 +623,18 @@ func (bc *Blockchain) GetMaxSupply() uint64 {
 	return MaxSupply
 }
 
+func BlockReward(blockHeight uint64) uint64 {
+	if blockHeight == 0 {
+		return AlucardBaseEmission + AlucardBonusStart
+	}
+	era := blockHeight / AlucardCycleBlocks
+	bonus := AlucardBonusStart
+	for i := uint64(0); i < era && bonus > 1; i++ {
+		bonus = bonus * AlucardDecayFactor / 100
+	}
+	return AlucardBaseEmission + bonus
+}
+
 func (bc *Blockchain) CreateEscrow(from, to string, amount uint64, serviceID string) (Escrow, error) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
@@ -697,17 +715,18 @@ func (bc *Blockchain) SubmitMinedBlock(block Block) error {
 	if author == "" {
 		return fmt.Errorf("missing miner address")
 	}
-	if bc.TokenSupply+BlockRewardBase <= MaxSupply {
+	reward := BlockReward(block.Index)
+	if bc.TokenSupply+reward <= MaxSupply {
 		if account := bc.Ledger[author]; account != nil {
-			account.Balance += BlockRewardBase
-			bc.TokenSupply += BlockRewardBase
+			account.Balance += reward
+			bc.TokenSupply += reward
 		}
 	}
 	bc.applyBlock(block)
 	bc.Chain = append(bc.Chain, block)
 	bc.Pending = []Transaction{}
 	bc.adjustDifficulty()
-	bc.appendAuditEntry("block_submitted", author, fmt.Sprintf("index=%d txs=%d", block.Index, len(block.Transactions)))
+	bc.appendAuditEntry("block_submitted", author, fmt.Sprintf("index=%d txs=%d reward=%d", block.Index, len(block.Transactions), reward))
 	atomic.AddInt64(&bc.ensureMetrics().blocksMined, 1)
 	return bc.saveToDisk()
 }
@@ -825,17 +844,18 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
 		return nil, err
 	}
-	if bc.TokenSupply+BlockRewardBase <= MaxSupply {
+	reward := BlockReward(block.Index)
+	if bc.TokenSupply+reward <= MaxSupply {
 		if account := bc.Ledger[author]; account != nil {
-			account.Balance += BlockRewardBase
-			bc.TokenSupply += BlockRewardBase
+			account.Balance += reward
+			bc.TokenSupply += reward
 		}
 	}
 	bc.applyBlock(block)
 	bc.Chain = append(bc.Chain, block)
 	bc.Pending = []Transaction{}
 	bc.adjustDifficulty()
-	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d miner=%s", block.Index, len(block.Transactions), author))
+	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d miner=%s reward=%d", block.Index, len(block.Transactions), author, reward))
 	atomic.AddInt64(&bc.ensureMetrics().blocksMined, 1)
 	if err := bc.saveToDisk(); err != nil {
 		return nil, err
@@ -920,8 +940,15 @@ func calculateHash(block Block) string {
 	clone := block
 	clone.BlockHash = ""
 	data, _ := json.Marshal(clone)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	first := sha256.Sum256(data)
+	second := sha256.Sum256(first[:])
+	quantum := sha512.Sum512(data)
+	merged := make([]byte, 32)
+	for i := 0; i < 32; i++ {
+		merged[i] = second[i] ^ quantum[i]
+	}
+	final := sha256.Sum256(merged)
+	return hex.EncodeToString(final[:])
 }
 
 func (bc *Blockchain) validateChain(chain []Block) error {

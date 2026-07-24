@@ -131,12 +131,30 @@ func TestFullMiningAndTransactions(t *testing.T) {
 	// Verify supply accounting
 	fmt.Println("--- Supply Accounting ---")
 	fmt.Printf("  Initial supply:    %d TDR\n", InitialSupply)
-	fmt.Printf("  Blocks mined:      %d (reward=%d each)\n", len(bc.Chain)-1, BlockRewardBase)
-	rewards := uint64(len(bc.Chain)-1) * BlockRewardBase
-	fmt.Printf("  Mining rewards:    %d TDR\n", rewards)
-	fmt.Printf("  Expected supply:   %d TDR\n", InitialSupply+rewards)
+	var totalRewards uint64
+	for i := uint64(1); i < uint64(len(bc.Chain)); i++ {
+		totalRewards += BlockReward(i)
+	}
+	fmt.Printf("  Blocks mined:      %d\n", len(bc.Chain)-1)
+	fmt.Printf("  Mining rewards:    %d TDR\n", totalRewards)
+	fmt.Printf("  Block 1 reward:    %d TDR (era 0)\n", BlockReward(1))
+	fmt.Printf("  Block 100M reward: %d TDR (era 0)\n", BlockReward(100_000_000))
+	fmt.Printf("  Block 1B reward:   %d TDR (era 0)\n", BlockReward(1_000_000_000))
+	fmt.Printf("  Expected supply:   %d TDR\n", InitialSupply+totalRewards)
 	fmt.Printf("  Actual supply:     %d TDR\n", bc.TokenSupply)
-	fmt.Printf("  Supply match:      %v\n", bc.TokenSupply == InitialSupply+rewards)
+	fmt.Printf("  Supply match:      %v\n", bc.TokenSupply == InitialSupply+totalRewards)
+	fmt.Println()
+	fmt.Println("--- Alucard Decay Schedule ---")
+	fmt.Printf("  Base emission:     %d TDR (permanent, never decays)\n", AlucardBaseEmission)
+	fmt.Printf("  Initial bonus:     %d TDR (decays every 5 years)\n", AlucardBonusStart)
+	fmt.Printf("  Decay factor:      %d%% per cycle\n", AlucardDecayFactor)
+	fmt.Printf("  Cycle length:      %d blocks (~5 years at 10s)\n", AlucardCycleBlocks)
+	fmt.Printf("  Era 0 reward:      %d TDR (base=%d + bonus=%d)\n", BlockReward(0), AlucardBaseEmission, AlucardBonusStart)
+	bonus := AlucardBonusStart
+	for era := uint64(0); era < 10; era++ {
+		fmt.Printf("  Era %d reward:      %d TDR\n", era, AlucardBaseEmission+bonus)
+		bonus = bonus * AlucardDecayFactor / 100
+	}
 	fmt.Println()
 
 	fmt.Println("--- PoW Hash Verification ---")
