@@ -156,6 +156,8 @@ type Validator struct {
 	Performance uint64 `json:"performance"`
 }
 
+type ValidatorInfo = Validator
+
 type Blockchain struct {
 	mu           sync.RWMutex
 	Chain        []Block
@@ -560,13 +562,9 @@ func (bc *Blockchain) Slash(address string, amount uint64) {
 	if account == nil || account.Staked < amount {
 		return
 	}
-	penalty := amount * SlashPercent / 100
-	if penalty == 0 {
-		penalty = 1
-	}
 	account.Staked -= amount
-	account.Balance -= penalty
-	bc.appendAuditEntry("slash", address, fmt.Sprintf("amount=%d penalty=%d", amount, penalty))
+	account.Balance -= amount
+	bc.appendAuditEntry("slash", address, fmt.Sprintf("amount=%d", amount))
 }
 
 func (bc *Blockchain) estimateFee(tx Transaction, congestion int) uint64 {

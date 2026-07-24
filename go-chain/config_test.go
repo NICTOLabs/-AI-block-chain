@@ -69,8 +69,8 @@ func TestServerConfigFromEnvUsesDefaultsWhenUnset(t *testing.T) {
 
 	cfg := serverConfigFromEnv()
 
-	if cfg.APIKey != "" {
-		t.Fatalf("expected empty default API key, got %q", cfg.APIKey)
+	if cfg.APIKey != "change-me-in-production" {
+		t.Fatalf("expected default API key, got %q", cfg.APIKey)
 	}
 	if !cfg.EnableAuth {
 		t.Fatal("expected auth to be enabled by default")
