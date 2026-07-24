@@ -1,4 +1,4 @@
-package main
+package blockchain
 
 import (
 	"crypto/ed25519"
@@ -144,7 +144,7 @@ func TestFuzzMempoolReplayProtection(t *testing.T) {
 	}
 	signed := wallet.Sign(tx)
 
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 
 	bc.EnqueueTransaction(signed)
 	bc.EnqueueTransaction(signed)
@@ -158,7 +158,7 @@ func TestFuzzNumericOverflowAndUnderflow(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	wallet := Wallet{PublicKey: pub, PrivateKey: priv}
 	addr := wallet.Address()
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	bc.AddAccount(addr, 1000, false)
 
 	if bc.Ledger[addr].Balance != 1000 {
@@ -176,14 +176,14 @@ func TestFuzzNumericOverflowAndUnderflow(t *testing.T) {
 		Timestamp: time.Now().UnixNano(),
 		ChainID:   "tdr-testnet-1",
 	})
-	if !verifyTransaction(zeroTx) {
+	if !VerifyTransaction(zeroTx) {
 		t.Fatal("zero-value transaction should have valid signature format")
 	}
 }
 
 func TestFuzzGovernanceInjection(t *testing.T) {
 	for i := 0; i < 50; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 		from := randomAddress(int64(i))
 		to := randomAddress(int64(i + 1000))
 		bc.AddAccount(from, 5000, false)
@@ -210,7 +210,7 @@ func TestFuzzGovernanceInjection(t *testing.T) {
 
 func TestFuzzChainValidationWithCorruptedBlocks(t *testing.T) {
 	for i := 0; i < 50; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 
 		for j := 0; j < 3; j++ {
 			pub, _, _ := ed25519.GenerateKey(rand.Reader)
@@ -248,7 +248,7 @@ func TestFuzzChainValidationWithCorruptedBlocks(t *testing.T) {
 
 func TestFuzzEscrowAndGovernanceBoundaries(t *testing.T) {
 	for i := 0; i < 100; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 		from := randomAddress(int64(i))
 		to := randomAddress(int64(i + 1000))
 		bc.AddAccount(from, 5000, false)

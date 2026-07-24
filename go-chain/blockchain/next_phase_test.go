@@ -5,7 +5,7 @@ import (
 )
 
 func TestMempoolReplacesLowerFeeSameSenderNonce(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	bc.AddAccount("alice", 1000, false)
 
 	oldTx := Transaction{ID: "tx-1", From: "alice", To: "bob", Amount: 10, Fee: 5, Nonce: 1, TxType: Transfer}
@@ -23,7 +23,7 @@ func TestMempoolReplacesLowerFeeSameSenderNonce(t *testing.T) {
 }
 
 func TestValidateChainRejectsTamperedBlock(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	block := Block{Index: 1, PreviousHash: bc.Chain[0].BlockHash, Timestamp: 1, Transactions: []Transaction{}, Nonce: 0}
 	block.BlockHash = calculateHash(block)
 	if bc.validateBlock(block, bc.Chain[0]) != nil {
@@ -36,7 +36,7 @@ func TestValidateChainRejectsTamperedBlock(t *testing.T) {
 }
 
 func TestCreateAgreementAndMeterUsage(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	agreement, err := bc.CreateServiceAgreement("agentA", "agentB", "model-1", 100, 2)
 	if err != nil {
 		t.Fatalf("expected agreement creation, got %v", err)

@@ -5,7 +5,7 @@ import (
 )
 
 func TestRejectsReplayedNonce(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	bc.AddAccount("human1", 1000, false)
 
 	tx := Transaction{
@@ -27,7 +27,7 @@ func TestRejectsReplayedNonce(t *testing.T) {
 }
 
 func TestRejectsInvalidChainID(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	bc.AddAccount("human1", 1000, false)
 
 	tx := Transaction{

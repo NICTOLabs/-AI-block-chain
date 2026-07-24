@@ -3,7 +3,7 @@ package blockchain
 import "testing"
 
 func TestCreateManagedWalletPersistsAddress(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	info, err := bc.CreateManagedWallet("human-1", false)
 	if err != nil {
 		t.Fatalf("expected wallet creation to succeed: %v", err)
