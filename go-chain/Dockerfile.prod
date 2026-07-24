@@ -1,10 +1,10 @@
 FROM golang:1.22-alpine AS builder
-WORKDIR /app
+WORKDIR /app/go-chain
 COPY go.mod ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /tender-node ./go-chain
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /genesis-tool ./go-chain/tools/genesis-tool
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /tender-node .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /genesis-tool ./tools/genesis-tool
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates tzdata

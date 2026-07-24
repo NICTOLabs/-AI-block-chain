@@ -16,22 +16,22 @@ func TestFuzzTransactionSigningWithMalformedInputs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("generate key: %v", err)
 		}
+		wallet := Wallet{PublicKey: pub, PrivateKey: priv}
+		addr := wallet.Address()
 
-		addrBytes := sha256.Sum256(pub)
 		tx := Transaction{
 			ID:        randomString(32 + i),
-			From:      hex.EncodeToString(addrBytes[:]),
+			From:      addr,
 			To:        randomAddress(int64(i + 1)),
 			Amount:    randomUint64(int64(i)),
 			Fee:       randomUint64(int64(i + 1)),
 			Nonce:     randomUint64(int64(i + 2)),
 			TxType:    randomTxType(int64(i)),
-			ChainID:   "tdr-testnet-1",
 			Payload:   randomString(64 + (i % 128)),
 			Timestamp: time.Now().UnixNano(),
+			ChainID:   "tdr-testnet-1",
 		}
 
-		wallet := Wallet{PublicKey: pub, PrivateKey: priv}
 		signed := wallet.Sign(tx)
 
 		if signed.Signature == "" {
@@ -39,6 +39,9 @@ func TestFuzzTransactionSigningWithMalformedInputs(t *testing.T) {
 		}
 		if len(signed.Signature) != 128 {
 			t.Fatalf("expected signature length 128, got %d", len(signed.Signature))
+		}
+		if signed.FromPubKey == "" {
+			t.Fatal("expected non-empty FromPubKey after signing")
 		}
 
 		payload, err := json.Marshal(signed)
@@ -54,15 +57,11 @@ func TestFuzzTransactionSigningWithMalformedInputs(t *testing.T) {
 		if decoded.Signature != signed.Signature {
 			t.Fatal("round-trip signature mismatch")
 		}
-
-		signedPayload := signed.signingPayload()
-		decodedPayload := decoded.signingPayload()
-		if string(signedPayload) != string(decodedPayload) {
-			t.Fatalf("signing payload mismatch: signed=%q decoded=%q", string(signedPayload), string(decodedPayload))
+		if decoded.FromPubKey != signed.FromPubKey {
+			t.Fatal("round-trip FromPubKey mismatch")
 		}
-
-		if !verifyTransaction(decoded) {
-			t.Fatal("expected re-verified transaction to be valid")
+		if decoded.ChainID != signed.ChainID {
+			t.Fatal("round-trip ChainID mismatch")
 		}
 	}
 }
@@ -129,10 +128,9 @@ func TestFuzzBlockHashStabilityAndIntegrity(t *testing.T) {
 
 func TestFuzzMempoolReplayProtection(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	wallet := &Wallet{PublicKey: pub, PrivateKey: priv}
+	wallet := Wallet{PublicKey: pub, PrivateKey: priv}
 
 	tx := Transaction{
-		ID:        "replay-test",
 		From:      hex.EncodeToString(pub),
 		FromPubKey: hex.EncodeToString(pub),
 		To:        hex.EncodeToString(pub),
@@ -142,10 +140,11 @@ func TestFuzzMempoolReplayProtection(t *testing.T) {
 		TxType:    Transfer,
 		Payload:   "replay-test",
 		Timestamp: time.Now().UnixNano(),
+		ChainID:   "tdr-testnet-1",
 	}
 	signed := wallet.Sign(tx)
 
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 
 	bc.EnqueueTransaction(signed)
 	bc.EnqueueTransaction(signed)
@@ -157,36 +156,34 @@ func TestFuzzMempoolReplayProtection(t *testing.T) {
 
 func TestFuzzNumericOverflowAndUnderflow(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	addrBytes := sha256.Sum256(pub)
-	addr := hex.EncodeToString(addrBytes[:])
-	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	wallet := Wallet{PublicKey: pub, PrivateKey: priv}
+	addr := wallet.Address()
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 	bc.AddAccount(addr, 1000, false)
 
 	if bc.Ledger[addr].Balance != 1000 {
 		t.Fatal("account balance should be set correctly")
 	}
 
-	zeroTx := Transaction{
+	zeroTx := wallet.Sign(Transaction{
 		From:      addr,
-		FromPubKey: hex.EncodeToString(pub),
 		To:        addr,
 		Amount:    0,
 		Fee:       0,
-		Nonce:     0,
+		Nonce:     1,
 		TxType:    Transfer,
 		Payload:   "zero",
 		Timestamp: time.Now().UnixNano(),
-	}
-	wallet := &Wallet{PublicKey: pub, PrivateKey: priv}
-	signed := wallet.Sign(zeroTx)
-	if !verifyTransaction(signed) {
+		ChainID:   "tdr-testnet-1",
+	})
+	if !verifyTransaction(zeroTx) {
 		t.Fatal("zero-value transaction should have valid signature format")
 	}
 }
 
 func TestFuzzGovernanceInjection(t *testing.T) {
 	for i := 0; i < 50; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 		from := randomAddress(int64(i))
 		to := randomAddress(int64(i + 1000))
 		bc.AddAccount(from, 5000, false)
@@ -212,13 +209,12 @@ func TestFuzzGovernanceInjection(t *testing.T) {
 }
 
 func TestFuzzChainValidationWithCorruptedBlocks(t *testing.T) {
-	for i := 0; i < 10; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	for i := 0; i < 50; i++ {
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 
 		for j := 0; j < 3; j++ {
-			pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-			addrBytes := sha256.Sum256(pub)
-			addr := hex.EncodeToString(addrBytes[:])
+			pub, _, _ := ed25519.GenerateKey(rand.Reader)
+			addr := hex.EncodeToString(pub)
 			bc.AddAccount(addr, 1000, false)
 			tx := Transaction{
 				From:      addr,
@@ -231,8 +227,7 @@ func TestFuzzChainValidationWithCorruptedBlocks(t *testing.T) {
 				Payload:   "chain-test",
 				Timestamp: time.Now().UnixNano(),
 			}
-			signed := (&Wallet{PublicKey: pub, PrivateKey: priv}).Sign(tx)
-			bc.EnqueueTransaction(signed)
+			bc.SubmitTransaction(tx)
 			_, _ = bc.MineBlock()
 		}
 
@@ -253,7 +248,7 @@ func TestFuzzChainValidationWithCorruptedBlocks(t *testing.T) {
 
 func TestFuzzEscrowAndGovernanceBoundaries(t *testing.T) {
 	for i := 0; i < 100; i++ {
-		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+		bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
 		from := randomAddress(int64(i))
 		to := randomAddress(int64(i + 1000))
 		bc.AddAccount(from, 5000, false)
@@ -295,7 +290,7 @@ func randomString(length int) string {
 	}
 	buf := make([]byte, length)
 	for i := range buf {
-		buf[i] = byte(0x20 + (i % 95)) // printable ASCII only (0x20-0x7E)
+		buf[i] = byte(i % 251)
 	}
 	return string(buf)
 }

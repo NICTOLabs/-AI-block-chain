@@ -127,9 +127,6 @@ func (h *Host) Start() error {
 	if err := h.dht.Bootstrap(h.ctx); err != nil {
 		return fmt.Errorf("bootstrap dht: %w", err)
 	}
-	if err := h.dht.Close(); err != nil {
-		return fmt.Errorf("close dht: %w", err)
-	}
 	return nil
 }
 

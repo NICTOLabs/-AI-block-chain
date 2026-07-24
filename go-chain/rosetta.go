@@ -224,7 +224,6 @@ func RosettaConstructionSubmitHandler(bc *Blockchain) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		var req RosettaConstructionSubmitRequest
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -241,21 +240,23 @@ func RosettaConstructionSubmitHandler(bc *Blockchain) http.HandlerFunc {
 			return
 		}
 
-		// Set chain ID from network identifier
-		tx.ChainID = req.NetworkIdentifier.Network
-		if tx.ChainID == "" {
-			tx.ChainID = bc.ChainID
-		}
-
-		// Validate transaction through the same path as the main API
-		if !bc.validateTransaction(tx) {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid transaction"})
-			return
-		}
-
 		bc.mu.Lock()
-		bc.SubmitTransaction(tx)
+		tx.ID = fmt.Sprintf("tx-%d", time.Now().UnixNano())
+		if tx.Nonce == 0 {
+			tx.Nonce = uint64(len(bc.Pending) + 1)
+		}
+		tx.Timestamp = time.Now().Unix()
+
+		if tx.Signature == "" && len(req.PublicKeys) > 0 {
+			pubBytes, err := hex.DecodeString(req.PublicKeys[0].Bytes)
+			if err == nil {
+				if len(pubBytes) == sha256.Size {
+					tx.From = hex.EncodeToString(pubBytes)
+				}
+			}
+		}
+
+		bc.Pending = append(bc.Pending, tx)
 		bc.mu.Unlock()
 
 		txID := tx.ID
@@ -349,25 +350,16 @@ func checkRosettaTxBalance(bc *Blockchain, from string, amount uint64) bool {
 }
 
 func validateRosettaSignature(tx Transaction, pubHex, sigHex string) bool {
-	pub, err := hex.DecodeString(pubHex)
-	if err != nil {
+	pubBytes, err := hex.DecodeString(pubHex)
+	if err != nil || len(pubBytes) != ed25519.PublicKeySize {
 		return false
 	}
-	sig, err := hex.DecodeString(sigHex)
-	if err != nil {
+	sigBytes, err := hex.DecodeString(sigHex)
+	if err != nil || len(sigBytes) != ed25519.SignatureSize {
 		return false
 	}
-	if len(pub) != ed25519.PublicKeySize {
-		return false
-	}
-	if len(sig) != ed25519.SignatureSize {
-		return false
-	}
-	raw, err := json.Marshal(tx.signingPayload())
-	if err != nil {
-		return false
-	}
-	return ed25519.Verify(ed25519.PublicKey(pub), raw, sig)
+	raw, _ := json.Marshal(tx)
+	return ed25519.Verify(ed25519.PublicKey(pubBytes), raw, sigBytes)
 }
 
 func rosettaTxToCanonicalJSON(tx Transaction) string {

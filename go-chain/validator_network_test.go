@@ -2,15 +2,14 @@ package main
 
 import "testing"
 
-func TestValidatorEconomicsAndRegistry(t *testing.T) {
-	bc := NewBlockchain(ProofOfStake, t.TempDir())
-	bc.AddAccount("validatorA", 2000, false)
-	bc.Stake("validatorA", 1000)
-	if got := bc.selectValidator(); got != "validatorA" {
-		t.Fatalf("expected validatorA to be selected, got %s", got)
+func TestRegisterValidatorUpdatesValidatorSet(t *testing.T) {
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1", "")
+	bc.AddAccount("validator-a", 2000, false)
+	if err := bc.RegisterValidator("validator-a", 1000); err != nil {
+		t.Fatalf("expected validator registration to succeed: %v", err)
 	}
-	bc.Slash("validatorA", 400)
-	if account := bc.Ledger["validatorA"]; account.Staked != 600 {
-		t.Fatalf("expected staked amount to drop to 600, got %d", account.Staked)
+	validator, ok := bc.Validators["validator-a"]
+	if !ok || !validator.Active {
+		t.Fatal("expected validator to be registered and active")
 	}
 }

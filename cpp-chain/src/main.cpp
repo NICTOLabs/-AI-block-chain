@@ -339,7 +339,7 @@ int main() {
     OpenSSL_add_all_algorithms();
     ERR_load_crypto_strings();
 
-    std::cout << "Starting AI blockchain node (C++)\n";
+    std::cout << "Starting AI blockchain node (C++)" << std::endl;
     Blockchain bc = new_blockchain(ConsensusType::ProofOfStake);
 
     Wallet human;
@@ -366,12 +366,13 @@ int main() {
 
     mine_block(bc);
 
-    std::cout << "Chain length: " << bc.chain.size() << "\n";
+    std::cout << "Chain length: " << bc.chain.size() << std::endl;
     for (const auto& [addr, account] : bc.ledger) {
-        std::cout << "Address: " << addr << ", Balance: " << account.balance << ", Agent: " << account.is_agent << "\n";
+        std::cout << "Address: " << addr << ", Balance: " << account.balance << ", Agent: " << account.is_agent << std::endl;
     }
     for (const auto& [id, model] : bc.registry) {
-        std::cout << "Model: " << id << ", owner=" << model.owner << ", price=" << model.price_per_call << "\n";
+        std::cout << "Model: " << id << ", owner=" << model.owner << ", price=" << model.price_per_call << std::endl;
     }
+    std::cout << std::flush;
     return 0;
 }

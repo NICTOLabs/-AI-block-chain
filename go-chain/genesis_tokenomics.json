@@ -2,7 +2,7 @@
   "network": "tdr-mainnet",
   "native_token": "TDR",
   "token_name": "TENDER",
-  "total_supply": 10000000000,
+  "total_supply": 18446744073709551615,
   "initial_circulating": 2500000000,
   "genesis_mint_cap": 4500000000,
   "staking_reward_apy": 0.05,
@@ -51,7 +51,7 @@
     "double_sign_slash_percentage": 100
   },
   "economic_safeguards": {
-    "max_supply_ceiling": 10000000000,
+    "max_supply_ceiling": 18446744073709551615,
     "circuit_breaker_threshold": 0.30,
     "circuit_breaker_action": "pause_minting_for_24_hours",
     "emergency_burn_enabled": true,

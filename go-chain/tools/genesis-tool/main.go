@@ -76,7 +76,7 @@ func mainGenerate() {
 	output := flag.String("output", "genesis_mainnet.json", "Output path for genesis file")
 	chainID := flag.String("chain-id", "tdr-mainnet-1", "Chain ID")
 	initialSupply := flag.Uint64("initial-supply", 4500000000, "Initial token supply")
-	maxSupply := flag.Uint64("max-supply", 10000000000, "Maximum token supply")
+	maxSupply := flag.Uint64("max-supply", 18446744073709551615, "Maximum token supply")
 	validatorCount := flag.Int("validator-count", 7, "Number of genesis validators")
 	teamPct := flag.Float64("team-pct", 0.15, "Team allocation percentage")
 	communityPct := flag.Float64("community-pct", 0.35, "Community allocation percentage")

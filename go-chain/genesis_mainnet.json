@@ -3,7 +3,7 @@
   "genesis_time": 1784763950,
   "consensus": "hybrid-pos-poa",
   "initial_supply": 4500000000,
-  "max_supply": 10000000000,
+  "max_supply": 18446744073709551615,
   "token": {
     "name": "TENDER",
     "symbol": "TDR",
@@ -11,7 +11,7 @@
   },
    "allocations": [
      {
-       "address": "0x09f046ab4b755d228e06c528d1a8cad540ae92f7",
+       "address": "09f046ab4b755d228e06c528d1a8cad540ae92f7",
        "public_key": "treasury-multisig-address",
        "amount": 675000000,
        "description": "Team and advisors",
@@ -166,7 +166,7 @@
   "multisig": {
     "threshold": 2,
     "signers": [
-      "0x09f046ab4b755d228e06c528d1a8cad540ae92f7",
+      "09f046ab4b755d228e06c528d1a8cad540ae92f7",
       "b4cbec6cee2f1582adf9e6f9ce478bacbff623d6ecd439a3b3dfca104a1eccf1",
       "1862e7bee8df1b5ff0acdbbfae36f65a0adc6e27fa5edd1ed115bf58e5ebeba1"
     ],

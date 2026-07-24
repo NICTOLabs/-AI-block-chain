@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/ai_block_chain_cpp.dir/src/main.cpp.o -o ai_block_chain_cpp  /usr/lib/x86_64-linux-gnu/libcrypto.so 
