@@ -2,8 +2,8 @@
   "chain_id": "tdr-mainnet-1",
   "genesis_time": 1784763950,
   "consensus": "hybrid-pos-poa",
-  "initial_supply": 4500000000,
-  "max_supply": 18446744073709551615,
+  "initial_supply": 50000000000,
+  "max_supply": 1000000000000000000,
   "token": {
     "name": "TENDER",
     "symbol": "TDR",
@@ -13,7 +13,7 @@
      {
        "address": "09f046ab4b755d228e06c528d1a8cad540ae92f7",
        "public_key": "treasury-multisig-address",
-       "amount": 675000000,
+       "amount": 7500000000,
        "description": "Team and advisors",
        "lockup_until": 1910994350,
        "vesting": "linear_4_years"
@@ -21,77 +21,77 @@
     {
       "address": "273f061e8dda2f0e5a2787df9a27130f77b1c6c4019b635429d1f9de9ca944fb",
       "public_key": "fab707beab3898ee96756a5c9aa7f0adbb9ba88c7cd733d592d403afa19ca013",
-      "amount": 1575000000,
+      "amount": 17500000000,
       "description": "Community and ecosystem",
       "vesting": "linear_4_years"
     },
     {
       "address": "4e697d24ea8630597b88b32584f5bbc27b7c6a23355f20241f1d825d49de869c",
       "public_key": "a886c455105be334cf1aaee38a0f95a33d976db6a4020b6dd09c69398304a428",
-      "amount": 900000000,
+      "amount": 10000000000,
       "description": "Treasury and operations",
       "vesting": "linear_4_years"
     },
     {
       "address": "5201bd84b6e4076c90ff386eaffb991b0ea3ebb191f13bb6e2262b5a9af4e4f7",
       "public_key": "d5d632be1435ecd4094b4ec11cab1fea8630283d437ec77d2fe782ebc1ba9e42",
-      "amount": 1125000000,
+      "amount": 12500000000,
       "description": "Staking rewards pool",
       "vesting": "linear_4_years"
     },
     {
       "address": "910bb69c042209d874059af3e2fba0a29894a39724f1b9d681a782d0273e6d59",
       "public_key": "edc51366bc82fef49889ecd966d3d84738e979928413a8785e620f2f943da01b",
-      "amount": 225000000,
+      "amount": 2500000000,
       "description": "Liquidity and exchange listings",
       "vesting": "linear_4_years"
     },
     {
       "address": "c7ee40a364ee64e468d1c24c588dd1e28d738a6c944c6fba6708c0c0ef0b8ee3",
       "public_key": "b4cbec6cee2f1582adf9e6f9ce478bacbff623d6ecd439a3b3dfca104a1eccf1",
-      "amount": 100000,
+      "amount": 1111111,
       "description": "Genesis validator 1 stake",
       "vesting": "none"
     },
     {
       "address": "495afc69648ad706df99889ccb354d53b186cc1ef56e76fd8a7a9c37c8570e9c",
       "public_key": "1862e7bee8df1b5ff0acdbbfae36f65a0adc6e27fa5edd1ed115bf58e5ebeba1",
-      "amount": 100000,
+      "amount": 1111111,
       "description": "Genesis validator 2 stake",
       "vesting": "none"
     },
     {
       "address": "eed6d97df7008383ecd8c090cbf153d2fed75933d47866bf10ec858c3f816ae1",
       "public_key": "f49d003a71c0934929bee542a53af1575929feaf93bd95684473f5fc572c4a5d",
-      "amount": 100000,
+      "amount": 1111111,
       "description": "Genesis validator 3 stake",
       "vesting": "none"
     },
     {
       "address": "2e71b6417ec7ea0df55d1123f7708ecaefe538891d7c78837ac668a8618407ec",
       "public_key": "9b5840dddf69c8de386364cfa313dc195157c1feadc2918b1c8d4c621e20e90a",
-      "amount": 100000,
+      "amount": 1111111,
       "description": "Genesis validator 4 stake",
       "vesting": "none"
     },
     {
       "address": "abead1d7cecd0c6d993711cc73d222275661bef447d2a1ab0762b0bc814ae7cd",
       "public_key": "92c8f7d2aebbfea8e2a0e31878c0e75c222f207aeca4cdc3f16298fd025bf27b",
-      "amount": 100000,
+      "amount": 1111111,
       "description": "Genesis validator 5 stake",
       "vesting": "none"
     },
     {
       "address": "2c0fdd40777415797375767bada2558211e70de3620a2bd632c1472f2a766b85",
       "public_key": "3c166cf954c49b85ad55b3830d51e7d326957d377d5a5a9142fde06f23ba2819",
-      "amount": 100000,
+      "amount": 1111111,
       "description": "Genesis validator 6 stake",
       "vesting": "none"
     },
     {
       "address": "4666db22cb2f5c38ccab822ed1e6877604cf4807614cb1aed2d7413d91d4ca44",
       "public_key": "19f83dba52b422d65a026c5572e282b189bc06d6526e647adba50e3310a93232",
-      "amount": 100000,
+      "amount": 1111111,
       "description": "Genesis validator 7 stake",
       "vesting": "none"
     }

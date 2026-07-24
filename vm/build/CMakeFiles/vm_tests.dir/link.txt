@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/vm_tests.dir/src/vm_tests.cpp.o CMakeFiles/vm_tests.dir/src/vm.cpp.o CMakeFiles/vm_tests.dir/src/opcodes.cpp.o CMakeFiles/vm_tests.dir/src/gas.cpp.o -o vm_tests 

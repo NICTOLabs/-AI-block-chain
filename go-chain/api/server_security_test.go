@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,5 +35,37 @@ func TestRateLimiterBlocksAfterLimit(t *testing.T) {
 	}
 	if limiter.allow("client-a") {
 		t.Fatal("expected third request to be rejected")
+	}
+}
+
+func TestMaxBodyMiddlewareRejectsLargePayloads(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mw := maxBodyMiddleware(10)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("this payload is longer than ten bytes"))
+	req.Header.Set("Content-Length", "40")
+	rr := httptest.NewRecorder()
+	mw(next).ServeHTTP(rr, req)
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected status 413, got %d", rr.Code)
+	}
+}
+
+func TestIdempotencyMiddlewareRejectsDuplicateKeys(t *testing.T) {
+	called := 0
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called++
+		w.WriteHeader(http.StatusOK)
+	})
+	mw := idempotencyMiddleware(next)
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set("Idempotency-Key", "abc-123")
+		rr := httptest.NewRecorder()
+		mw.ServeHTTP(rr, req)
+	}
+	if called != 1 {
+		t.Fatalf("expected handler to be called once for duplicate idempotency key, got %d", called)
 	}
 }

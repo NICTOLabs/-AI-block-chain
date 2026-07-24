@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -91,14 +90,15 @@ const (
 	MinStake          uint64 = 100
 	SlashPercent      uint64 = 10
 	CurrencyName      string = "TENDER"
-	MaxSupply         uint64 = 18_446_744_073_709_551_615
-	InitialSupply     uint64 = 4_500_000_000
-	BlockRewardBase   uint64 = 10
+	MaxSupply         uint64 = 1_000_000_000_000_000_000
+	InitialSupply     uint64 = 50_000_000_000
+	BlockRewardBase   uint64 = 100
+	CommunityFundAddress string = "tdr-community-fund-000000000000000000000000000000000000"
 
-	AlucardBaseEmission uint64 = 2
-	AlucardBonusStart   uint64 = 8
+	AlucardBaseEmission uint64 = 20
+	AlucardBonusStart   uint64 = 80
 	AlucardDecayFactor  uint64 = 70
-	AlucardCycleBlocks  uint64 = 157_788_000
+	AlucardCycleBlocks  uint64 = 78_914_000
 )
 
 type Escrow struct {
@@ -189,6 +189,8 @@ type Blockchain struct {
 	ChainID      string
 	BlockTime    time.Duration
 	Difficulty   uint32
+	MintPaused      bool
+	MintPauseUntil  int64
 	metrics      *serverMetrics
 }
 
@@ -496,31 +498,42 @@ func (bc *Blockchain) loadGenesis(path string) error {
 	}
 	bc.TokenSupply = 0
 	for _, alloc := range genesis.Allocations {
-		if alloc.Address != "" {
-			bc.addAccountLocked(alloc.Address, alloc.Amount, false)
-			bc.TokenSupply += alloc.Amount
+		if alloc.Address == "" {
+			return fmt.Errorf("genesis allocation missing address")
 		}
+		if alloc.Amount > MaxSupply {
+			return fmt.Errorf("genesis allocation exceeds max supply")
+		}
+		bc.addAccountLocked(alloc.Address, alloc.Amount, false)
+		bc.TokenSupply += alloc.Amount
 	}
 	for _, val := range genesis.Validators {
-		if val.Address != "" {
-			if acct := bc.Ledger[val.Address]; acct != nil {
-				acct.IsAgent = false
-				acct.Staked = val.Stake
-				acct.Balance -= val.Stake
-			} else {
-				bc.addAccountLocked(val.Address, val.Stake, false)
-				bc.Ledger[val.Address].Staked = val.Stake
-				bc.TokenSupply += val.Stake
-			}
-			bc.Validators[val.Address] = Validator{
-				Address:     val.Address,
-				Stake:       val.Stake,
-				Active:      true,
-				JoinedAt:    time.Now().Unix(),
-				Performance: 100,
-			}
-			bc.AddAuthority(val.Address)
+		if val.Address == "" {
+			return fmt.Errorf("genesis validator missing address")
 		}
+		if val.Stake < MinStake {
+			return fmt.Errorf("genesis validator stake below minimum")
+		}
+		bc.TokenSupply += val.Stake
+		if acct := bc.Ledger[val.Address]; acct != nil {
+			acct.IsAgent = false
+			acct.Staked = val.Stake
+			acct.Balance -= val.Stake
+		} else {
+			bc.addAccountLocked(val.Address, val.Stake, false)
+			bc.Ledger[val.Address].Staked = val.Stake
+		}
+		bc.Validators[val.Address] = Validator{
+			Address:     val.Address,
+			Stake:       val.Stake,
+			Active:      true,
+			JoinedAt:    time.Now().Unix(),
+			Performance: 100,
+		}
+		bc.AddAuthority(val.Address)
+	}
+	if bc.TokenSupply > MaxSupply {
+		return fmt.Errorf("genesis total supply exceeds max supply: %d > %d", bc.TokenSupply, MaxSupply)
 	}
 	bc.appendAuditEntry("genesis_loaded", "system", fmt.Sprintf("chain_id=%s supply=%d allocations=%d validators=%d", bc.ChainID, bc.TokenSupply, len(genesis.Allocations), len(genesis.Validators)))
 	return nil
@@ -796,6 +809,9 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
+	if bc.MintPaused && bc.MintPauseUntil > 0 && time.Now().Unix() < bc.MintPauseUntil {
+		return nil, fmt.Errorf("minting is currently paused")
+	}
 	if len(bc.Chain) == 0 {
 		bc.createGenesisBlock()
 	}
@@ -829,10 +845,14 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 				continue
 			}
 			if tx.Fee > 0 {
-				burnAmount := tx.Fee * BurnRatePercent / 100
-				bc.TokenSupply -= burnAmount
-				if account := bc.Ledger[author]; account != nil {
-					account.Balance += burnAmount
+				totalBurn := tx.Fee * BurnRatePercent / 100
+				permanentBurn := totalBurn * 70 / 100
+				communityFund := totalBurn - permanentBurn
+				bc.TokenSupply -= permanentBurn
+				if cfAcct := bc.Ledger[CommunityFundAddress]; cfAcct != nil {
+					cfAcct.Balance += communityFund
+				} else {
+					bc.Ledger[CommunityFundAddress] = &Account{Address: CommunityFundAddress, Balance: communityFund, Staked: 0, IsAgent: false}
 				}
 			}
 			block.Transactions = append(block.Transactions, tx)
@@ -940,15 +960,8 @@ func calculateHash(block Block) string {
 	clone := block
 	clone.BlockHash = ""
 	data, _ := json.Marshal(clone)
-	first := sha256.Sum256(data)
-	second := sha256.Sum256(first[:])
-	quantum := sha512.Sum512(data)
-	merged := make([]byte, 32)
-	for i := 0; i < 32; i++ {
-		merged[i] = second[i] ^ quantum[i]
-	}
-	final := sha256.Sum256(merged)
-	return hex.EncodeToString(final[:])
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func (bc *Blockchain) validateChain(chain []Block) error {
@@ -989,6 +1002,9 @@ func (bc *Blockchain) validateTransaction(tx Transaction) bool {
 		return false
 	}
 	if bc.isReplay(tx) {
+		return false
+	}
+	if tx.Timestamp == 0 || time.Unix(tx.Timestamp, 0).Before(time.Now().Add(-10*time.Minute)) {
 		return false
 	}
 	sender, ok := bc.Ledger[tx.From]

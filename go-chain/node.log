@@ -1,0 +1,10 @@
+{"ts":1784874866,"event":"node_start","actor":"node","details":"currency=TENDER api_port=8081 p2p_port=3032 consensus=pos chain_id=tdr-mainnet-1"}
+{"ts":1784874866,"event":"api_listen","actor":"node","details":"port=8081"}
+{"ts":1784874894,"event":"p2p_decode","actor":"[::1]:44076","details":"invalid character 'G' looking for beginning of value"}
+{"ts":1784874894,"event":"p2p_decode","actor":"[::1]:44090","details":"invalid character 'G' looking for beginning of value"}
+{"ts":1784874894,"event":"p2p_decode","actor":"[::1]:44100","details":"invalid character 'G' looking for beginning of value"}
+{"ts":1784874894,"event":"p2p_decode","actor":"[::1]:44102","details":"invalid character 'G' looking for beginning of value"}
+{"ts":1784874899,"event":"p2p_decode","actor":"[::1]:44116","details":"invalid character 'G' looking for beginning of value"}
+{"ts":1784874899,"event":"p2p_decode","actor":"[::1]:44128","details":"invalid character 'G' looking for beginning of value"}
+{"ts":1784874899,"event":"p2p_decode","actor":"[::1]:44142","details":"invalid character 'G' looking for beginning of value"}
+{"ts":1784874899,"event":"p2p_decode","actor":"[::1]:44154","details":"invalid character 'G' looking for beginning of value"}

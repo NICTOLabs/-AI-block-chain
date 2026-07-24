@@ -148,7 +148,7 @@ func TestFullMiningAndTransactions(t *testing.T) {
 	fmt.Printf("  Base emission:     %d TDR (permanent, never decays)\n", AlucardBaseEmission)
 	fmt.Printf("  Initial bonus:     %d TDR (decays every 5 years)\n", AlucardBonusStart)
 	fmt.Printf("  Decay factor:      %d%% per cycle\n", AlucardDecayFactor)
-	fmt.Printf("  Cycle length:      %d blocks (~5 years at 10s)\n", AlucardCycleBlocks)
+	fmt.Printf("  Cycle length:      %d blocks (~5 years at 5s)\n", AlucardCycleBlocks)
 	fmt.Printf("  Era 0 reward:      %d TDR (base=%d + bonus=%d)\n", BlockReward(0), AlucardBaseEmission, AlucardBonusStart)
 	bonus := AlucardBonusStart
 	for era := uint64(0); era < 10; era++ {

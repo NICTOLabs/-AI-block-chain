@@ -1,20 +1,40 @@
-# Rust
-**/target/
+# Binaries
+ai_block_chain_go
+tender-node
+*.bin
+*.exe
+*.out
+
+# Build artifacts
+target/
 Cargo.lock
 
 # Go
-**/bin/
-**/pkg/
-**/data/
+*.test
+*.prof
+*.mem
+coverage.out
 
-# C++
-**/build/
-*.o
-*.obj
-*.exe
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
 
-# General
+# Docker
+docker-compose.override.yml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
 .DS_Store
-*.log
+Thumbs.db
 
-go-chain/ai_block_chain_go
+# Secrets
+*.pem
+*.key
+*.pub

@@ -25,6 +25,9 @@ type ServerConfig struct {
 	RateLimit   int
 	RateWindow  time.Duration
 	EnableTLS   bool
+	TLSCertFile string
+	TLSKeyFile  string
+	MaxBodyBytes int64
 	MetricsPath string
 	APIPort     int
 	P2PPort     int
@@ -73,6 +76,7 @@ func ServerConfigFromEnv() ServerConfig {
 		DataDir:     getEnvOrDefault("TENDER_DATA_DIR", "./data"),
 		Consensus:   strings.ToLower(getEnvOrDefault("TENDER_CONSENSUS", "pos")),
 		StrictP2P:   getEnvBoolOrDefault("TENDER_STRICT_P2P", true),
+		MaxBodyBytes: getEnvInt64OrDefault("TENDER_MAX_BODY_BYTES", 1<<20),
 		FaucetAmount: uint64(getEnvIntOrDefault("TENDER_FAUCET_AMOUNT", 1000)),
 	}
 	return cfg
@@ -88,6 +92,15 @@ func getEnvOrDefault(key, fallback string) string {
 func getEnvIntOrDefault(key string, fallback int) int {
 	if value := os.Getenv(key); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func getEnvInt64OrDefault(key string, fallback int64) int64 {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
 			return parsed
 		}
 	}
@@ -118,6 +131,38 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Request-ID", id)
 		ctx := context.WithValue(r.Context(), "request_id", id)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func maxBodyMiddleware(limit int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if limit > 0 && r.ContentLength > 0 && r.ContentLength > limit {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			if limit > 0 {
+				r.Body = http.MaxBytesReader(w, r.Body, limit)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func idempotencyMiddleware(next http.Handler) http.Handler {
+	seen := make(map[string]struct{})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("Idempotency-Key")
+		if key == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if _, ok := seen[key]; ok {
+			http.Error(w, "duplicate idempotency key", http.StatusConflict)
+			return
+		}
+		seen[key] = struct{}{}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -759,7 +804,17 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		})
 	})
 	blockchain.LogJSON("api_listen", "node", fmt.Sprintf("port=%d", port))
-	if err := http.ListenAndServe(":"+strconv.Itoa(port), requestIDMiddleware(mux)); err != nil {
+	var handler http.Handler = mux
+	handler = maxBodyMiddleware(cfg.MaxBodyBytes)(handler)
+	handler = idempotencyMiddleware(handler)
+	handler = requestIDMiddleware(handler)
+	if cfg.EnableTLS {
+		if err := http.ListenAndServeTLS(":"+strconv.Itoa(port), cfg.TLSCertFile, cfg.TLSKeyFile, handler); err != nil {
+			fmt.Println(err)
+		}
+		return
+	}
+	if err := http.ListenAndServe(":"+strconv.Itoa(port), handler); err != nil {
 		fmt.Println(err)
 	}
 }

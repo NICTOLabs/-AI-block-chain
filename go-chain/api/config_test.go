@@ -17,6 +17,7 @@ func TestServerConfigFromEnvUsesDefaultsAndOverrides(t *testing.T) {
 	os.Setenv("TENDER_DATA_DIR", "/tmp/tender")
 	os.Setenv("TENDER_CONSENSUS", "poa")
 	os.Setenv("TENDER_STRICT_P2P", "false")
+	os.Setenv("TENDER_MAX_BODY_BYTES", "5242880")
 	defer os.Unsetenv("TENDER_API_KEY")
 	defer os.Unsetenv("TENDER_ENABLE_AUTH")
 	defer os.Unsetenv("TENDER_RATE_LIMIT")
@@ -60,10 +61,13 @@ func TestServerConfigFromEnvUsesDefaultsAndOverrides(t *testing.T) {
 	if cfg.StrictP2P {
 		t.Fatal("expected strict P2P to be disabled from env")
 	}
+	if cfg.MaxBodyBytes != 5242880 {
+		t.Fatalf("expected max body bytes 5242880, got %d", cfg.MaxBodyBytes)
+	}
 }
 
 func TestServerConfigFromEnvUsesDefaultsWhenUnset(t *testing.T) {
-	for _, key := range []string{"TENDER_API_KEY", "TENDER_ENABLE_AUTH", "TENDER_RATE_LIMIT", "TENDER_RATE_WINDOW_SECONDS", "TENDER_METRICS_PATH", "TENDER_API_PORT", "TENDER_P2P_PORT", "TENDER_DATA_DIR", "TENDER_CONSENSUS", "TENDER_STRICT_P2P"} {
+	for _, key := range []string{"TENDER_API_KEY", "TENDER_ENABLE_AUTH", "TENDER_RATE_LIMIT", "TENDER_RATE_WINDOW_SECONDS", "TENDER_METRICS_PATH", "TENDER_API_PORT", "TENDER_P2P_PORT", "TENDER_DATA_DIR", "TENDER_CONSENSUS", "TENDER_STRICT_P2P", "TENDER_MAX_BODY_BYTES"} {
 		os.Unsetenv(key)
 	}
 
@@ -98,5 +102,8 @@ func TestServerConfigFromEnvUsesDefaultsWhenUnset(t *testing.T) {
 	}
 	if !cfg.StrictP2P {
 		t.Fatal("expected strict P2P to be enabled by default")
+	}
+	if cfg.MaxBodyBytes != 1<<20 {
+		t.Fatalf("expected default max body bytes 1MB, got %d", cfg.MaxBodyBytes)
 	}
 }
