@@ -86,7 +86,7 @@ const (
 	SlashPercent      uint64 = 10
 	CurrencyName      string = "TENDER"
 	CurrencySubunit   string = "HOGOHOGO"
-	MaxSupply         uint64 = 1_000_000_000_000_000_000
+	MaxSupply         uint64 = 18_446_744_073_709_551_615
 	CommunityFundAddress string = "tdr-community-fund-000000000000000000000000000000000000"
 )
 

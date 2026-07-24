@@ -90,7 +90,7 @@ const (
 	MinStake          uint64 = 100
 	SlashPercent      uint64 = 10
 	CurrencyName      string = "TENDER"
-	MaxSupply         uint64 = 1_000_000_000_000_000_000
+	MaxSupply         uint64 = 18_446_744_073_709_551_615
 	InitialSupply     uint64 = 50_000_000_000
 	BlockRewardBase   uint64 = 100
 	CommunityFundAddress string = "tdr-community-fund-000000000000000000000000000000000000"

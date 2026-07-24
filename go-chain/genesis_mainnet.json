@@ -3,7 +3,7 @@
   "genesis_time": 1784763950,
   "consensus": "hybrid-pos-poa",
   "initial_supply": 50000000000,
-  "max_supply": 1000000000000000000,
+  "max_supply": 18446744073709551615,
   "token": {
     "name": "TENDER",
     "symbol": "TDR",
