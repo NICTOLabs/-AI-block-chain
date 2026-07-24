@@ -16,10 +16,12 @@ func TestFuzzTransactionSigningWithMalformedInputs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("generate key: %v", err)
 		}
+		hash := sha256.Sum256(pub)
+		addr := hex.EncodeToString(hash[:])
 
 		tx := Transaction{
 			ID:        randomString(32 + i),
-			From:      hex.EncodeToString(pub),
+			From:      addr,
 			To:        randomAddress(int64(i + 1)),
 			Amount:    randomUint64(int64(i)),
 			Fee:       randomUint64(int64(i + 1)),
@@ -27,6 +29,7 @@ func TestFuzzTransactionSigningWithMalformedInputs(t *testing.T) {
 			TxType:    randomTxType(int64(i)),
 			Payload:   randomString(64 + (i % 128)),
 			Timestamp: time.Now().UnixNano(),
+			ChainID:   "tdr-testnet-1",
 		}
 
 		wallet := Wallet{PublicKey: pub, PrivateKey: priv}
@@ -138,8 +141,8 @@ func TestFuzzMempoolReplayProtection(t *testing.T) {
 
 	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 
-	bc.SubmitTransaction(signed)
-	bc.SubmitTransaction(signed)
+	bc.EnqueueTransaction(signed)
+	bc.EnqueueTransaction(signed)
 
 	if len(bc.Pending) != 1 {
 		t.Fatalf("expected 1 pending tx after duplicate submission, got %d", len(bc.Pending))
@@ -147,8 +150,9 @@ func TestFuzzMempoolReplayProtection(t *testing.T) {
 }
 
 func TestFuzzNumericOverflowAndUnderflow(t *testing.T) {
-	pub, _, _ := ed25519.GenerateKey(rand.Reader)
-	addr := hex.EncodeToString(pub)
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	hash := sha256.Sum256(pub)
+	addr := hex.EncodeToString(hash[:])
 	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
 	bc.AddAccount(addr, 1000, false)
 
@@ -166,8 +170,11 @@ func TestFuzzNumericOverflowAndUnderflow(t *testing.T) {
 		TxType:    Transfer,
 		Payload:   "zero",
 		Timestamp: time.Now().UnixNano(),
+		ChainID:   "tdr-testnet-1",
 	}
-	if !verifyTransaction(zeroTx) {
+	w := Wallet{PublicKey: pub, PrivateKey: priv}
+	signedZero := w.Sign(zeroTx)
+	if !verifyTransaction(signedZero) {
 		t.Fatal("zero-value transaction should have valid signature format")
 	}
 }
@@ -281,7 +288,7 @@ func randomString(length int) string {
 	}
 	buf := make([]byte, length)
 	for i := range buf {
-		buf[i] = byte(i % 251)
+		buf[i] = byte('a' + (i % 26))
 	}
 	return string(buf)
 }

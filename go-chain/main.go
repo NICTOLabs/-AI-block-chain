@@ -339,7 +339,7 @@ func (w *Wallet) Address() string {
 func (w *Wallet) Sign(tx Transaction) Transaction {
 	tx.FromPubKey = hex.EncodeToString(w.PublicKey)
 	tx.Timestamp = time.Now().Unix()
-	payload := tx.signingPayload()
+	payload := CanonicalSigningBytes(tx)
 	tx.Signature = hex.EncodeToString(ed25519.Sign(w.PrivateKey, payload))
 	return tx
 }
@@ -724,10 +724,6 @@ func (bc *Blockchain) EnqueueTransaction(tx Transaction) {
 	if tx.Nonce == 0 {
 		tx.Nonce = bc.NextNonce[tx.From]
 	}
-	if bc.isReplay(tx) {
-		bc.appendAuditEntry("transaction_rejected", tx.From, fmt.Sprintf("tx_id=%s nonce=%d", tx.ID, tx.Nonce))
-		return
-	}
 	for i, pending := range bc.Pending {
 		if pending.ID == tx.ID && pending.Nonce == tx.Nonce && pending.From == tx.From {
 			if tx.Fee > pending.Fee {
@@ -736,6 +732,10 @@ func (bc *Blockchain) EnqueueTransaction(tx Transaction) {
 			}
 			return
 		}
+	}
+	if bc.isReplay(tx) {
+		bc.appendAuditEntry("transaction_rejected", tx.From, fmt.Sprintf("tx_id=%s nonce=%d", tx.ID, tx.Nonce))
+		return
 	}
 	if uint64(len(bc.Pending)) >= 5000 {
 		lowestFeeIdx := 0
@@ -751,6 +751,7 @@ func (bc *Blockchain) EnqueueTransaction(tx Transaction) {
 	} else {
 		bc.Pending = append(bc.Pending, tx)
 	}
+	bc.markTransactionSeen(tx)
 	bc.appendAuditEntry("transaction_queued", tx.From, fmt.Sprintf("tx_id=%s fee=%d", tx.ID, tx.Fee))
 }
 
@@ -1176,7 +1177,7 @@ func verifyTransaction(tx Transaction) bool {
 	if len(sig) != ed25519.SignatureSize {
 		return false
 	}
-	return ed25519.Verify(ed25519.PublicKey(pubKey), tx.signingPayload(), sig)
+	return ed25519.Verify(ed25519.PublicKey(pubKey), CanonicalSigningBytes(tx), sig)
 }
 
 func consensusName(consensus ConsensusType) string {
