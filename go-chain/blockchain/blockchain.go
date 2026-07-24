@@ -52,6 +52,7 @@ type Blockchain struct {
 	Difficulty      uint32
 	FinalizedBlocks map[uint64]struct{}
 	LastFinalized   uint64
+	AgentTxCount    uint64
 	metrics         *serverMetrics
 }
 
@@ -81,6 +82,8 @@ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blo
 		metrics:         &serverMetrics{},
 		FinalizedBlocks: make(map[uint64]struct{}),
 		LastFinalized:   0,
+		AgentTxCount:    0,
+		metrics:         &serverMetrics{},
 	}
 	bc.createGenesisBlock()
 	_ = os.MkdirAll(dataDir, 0o755)

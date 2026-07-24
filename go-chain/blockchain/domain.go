@@ -167,6 +167,7 @@ type nodeState struct {
 	NextNonce       map[string]uint64              `json:"next_nonce"`
 	FinalizedBlocks map[uint64]struct{}            `json:"finalized_blocks"`
 	LastFinalized   uint64                         `json:"last_finalized"`
+	AgentTxCount    uint64                         `json:"agent_tx_count"`
 }
 
 type Snapshot struct {
