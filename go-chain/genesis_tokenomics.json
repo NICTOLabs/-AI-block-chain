@@ -16,6 +16,9 @@
   "community_reward_share": 0.35,
   "treasury_reward_share": 0.15,
   "validator_performance_decay": 0.8,
+  "agent_activity_base_demand": 1000000,
+  "agent_demand_growth_rate": 0.05,
+  "deflationary_threshold": 5000000000,
   "token_allocation": {
     "team_and_advisors": {
       "percentage": 0.15,
@@ -75,5 +78,11 @@
     "epoch_duration_years": 1,
     "halving_enabled": true,
     "target_issuance_at_maturity": 0.005
+  },
+  "dual_purpose_model": {
+    "human_use_cases": ["payments", "store_of_value", "staking", "governance", "defi"],
+    "agent_use_cases": ["model_registry", "api_purchases", "escrow", "service_agreements"],
+    "demand_flywheel": "AI agent activity creates sustained TDR demand, benefiting human holders",
+    "deflationary_mechanism": "Transaction fees are partially burned, reducing supply over time"
   }
 }

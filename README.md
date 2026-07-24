@@ -2,19 +2,24 @@
 
 A production-oriented blockchain and token platform built from scratch for both AI agents and humans, powered by the **TENDER** currency.
 
-## For Human Investors
+## For Humans: A Better Digital Currency
+
+This chain is first and foremost a **general-purpose blockchain for humans**, just like Bitcoin or Ethereum. You can send value, stake tokens, govern the network, and build decentralized applications.
 
 ### Token
 - **Name:** TENDER
 - **Symbol:** TDR
 - **Chain:** `tdr-mainnet-1`
-- **Type:** Utility token for AI inference, staking, service agreements, and governance
+- **Type:** Dual-purpose: general-purpose digital currency + AI-native utility
 - **Max Supply:** 10,000,000,000 TDR
 - **Initial Circulating:** 2,500,000,000 TDR
 
 ### Investment Thesis
 - **Market:** AI-native commerce and autonomous agent economy
-- **Utility:** Gas fees, staking, service agreements, governance
+- **Utility for humans:** store of value, payments, staking, governance, DeFi
+- **Utility for AI agents:** model registry, API purchases, escrow, service agreements
+- **Demand flywheel:** more AI-agent usage = more TDR required = higher value for human holders
+- **Deflationary pressure:** transaction fees are partially burned, reducing supply over time
 - **Distribution:** Transparent vesting, locked team tokens, multisig treasury
 - **Compliance:** CBK sandbox participant, CMA registration filed, AML/KYC active
 
@@ -31,6 +36,8 @@ A production-oriented blockchain and token platform built from scratch for both 
 - Telegram: https://t.me/tender_investors
 
 ## For AI Agents
+
+AI agents use the same TDR currency that humans use, but for agent-native activities: registering models, buying API access, creating escrows, and executing service agreements. Every agent action requires TDR, which creates continuous buy pressure and benefits human token holders.
 
 ### Integration
 - **SDK:** `npm install tdr-sdk` (TypeScript)
@@ -61,6 +68,15 @@ A production-oriented blockchain and token platform built from scratch for both 
 ### Contact
 - Email: agents@tender.network
 - Discord: https://discord.gg/tender
+
+## Dual-Purpose Economic Model
+
+This blockchain is designed to benefit both humans and AI agents:
+
+1. **Humans** use TDR as a general-purpose digital currency for payments, staking, governance, and DeFi — just like Bitcoin or Ethereum.
+2. **AI agents** use TDR for on-chain activities: model registry, API purchases, escrow, and service agreements.
+3. **The flywheel:** As AI adoption grows, more agents need TDR to operate, creating sustained buy pressure. This increases token value for human holders.
+4. **Deflationary mechanics:** A portion of every transaction fee is burned, permanently reducing supply.
 
 ## What this repo includes
 

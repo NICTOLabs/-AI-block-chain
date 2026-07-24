@@ -26,6 +26,9 @@ type TokenomicsConfig struct {
 	MinInflationRate       float64 `json:"min_inflation_rate"`
 	ValidatorPerformanceDecay float64 `json:"validator_performance_decay"`
 	BlockRewardBase        uint64  `json:"block_reward_base"`
+	AgentActivityBaseDemand uint64 `json:"agent_activity_base_demand"`
+	AgentDemandGrowthRate   float64 `json:"agent_demand_growth_rate"`
+	DeflationaryThreshold  uint64 `json:"deflationary_threshold"`
 }
 
 func LoadTokenomicsConfig(path string) (TokenomicsConfig, error) {
@@ -68,6 +71,9 @@ func (cfg TokenomicsConfig) Validate() error {
 	}
 	if cfg.InflationDecayPerYear < 0 || cfg.InflationDecayPerYear > 1 {
 		return errors.New("inflation decay per year must be between 0 and 1")
+	}
+	if cfg.AgentDemandGrowthRate < 0 {
+		return errors.New("agent demand growth rate cannot be negative")
 	}
 	return nil
 }
@@ -240,6 +246,45 @@ type TokenSupplyProjection struct {
 	ProjectedSupply uint64  `json:"projected_supply"`
 	InflationRate   float64 `json:"inflation_rate"`
 	MaxSupply       uint64  `json:"max_supply"`
+}
+
+type DualPurposeMetrics struct {
+	AgentDemandPressure uint64  `json:"agent_demand_pressure"`
+	DeflationaryPressure float64 `json:"deflationary_pressure"`
+	HumanValueScore     float64 `json:"human_value_score"`
+	DemandBurnRatio     float64 `json:"demand_burn_ratio"`
+}
+
+func (cfg TokenomicsConfig) AgentDemandPressure(agentTransactionCount uint64) uint64 {
+	base := cfg.AgentActivityBaseDemand
+	growth := uint64(float64(base) * cfg.AgentDemandGrowthRate * float64(agentTransactionCount))
+	return base + growth
+}
+
+func (cfg TokenomicsConfig) DeflationaryPressure(currentSupply uint64) float64 {
+	burnRate := cfg.CalculateEffectiveBurnRate(currentSupply)
+	if currentSupply > cfg.DeflationaryThreshold {
+		return burnRate * 1.5
+	}
+	return burnRate
+}
+
+func (cfg TokenomicsConfig) HumanValueScore(currentSupply uint64, agentTransactionCount uint64) float64 {
+	demand := float64(cfg.AgentDemandPressure(agentTransactionCount))
+	deflation := cfg.DeflationaryPressure(currentSupply)
+	if deflation == 0 {
+		return demand
+	}
+	return demand / deflation
+}
+
+func (cfg TokenomicsConfig) DemandBurnRatio(agentTransactionCount uint64, currentSupply uint64) float64 {
+	demand := float64(cfg.AgentDemandPressure(agentTransactionCount))
+	burn := float64(uint64(cfg.DeflationaryPressure(currentSupply) * 1_000_000))
+	if burn == 0 {
+		return 0
+	}
+	return demand / burn
 }
 
 type BlockRewardDistribution struct {
