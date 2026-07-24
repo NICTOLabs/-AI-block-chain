@@ -1,0 +1,5 @@
+/workspaces/-AI-block-chain/vm/build/CMakeFiles/ai_vm.dir
+/workspaces/-AI-block-chain/vm/build/CMakeFiles/vm_tests.dir
+/workspaces/-AI-block-chain/vm/build/CMakeFiles/test.dir
+/workspaces/-AI-block-chain/vm/build/CMakeFiles/edit_cache.dir
+/workspaces/-AI-block-chain/vm/build/CMakeFiles/rebuild_cache.dir

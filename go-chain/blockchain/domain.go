@@ -86,6 +86,8 @@ const (
 	SlashPercent      uint64 = 10
 	CurrencyName      string = "TENDER"
 	CurrencySubunit   string = "HOGOHOGO"
+	MaxSupply         uint64 = 1_000_000_000_000_000_000
+	CommunityFundAddress string = "tdr-community-fund-000000000000000000000000000000000000"
 )
 
 type Escrow struct {
@@ -133,6 +135,26 @@ type Wallet struct {
 	PrivateKey ed25519.PrivateKey
 }
 
+type HashFunction interface {
+	Hash(Block) string
+}
+
+type sha256Hasher struct{}
+
+func (sha256Hasher) Hash(block Block) string {
+	clone := block
+	clone.BlockHash = ""
+	data, _ := json.Marshal(clone)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+var DefaultHash HashFunction = sha256Hasher{}
+
+func calculateHash(block Block) string {
+	return DefaultHash.Hash(block)
+}
+
 type ManagedWallet struct {
 	ID        string `json:"id"`
 	Address   string `json:"address"`
@@ -168,6 +190,8 @@ type nodeState struct {
 	FinalizedBlocks map[uint64]struct{}            `json:"finalized_blocks"`
 	LastFinalized   uint64                         `json:"last_finalized"`
 	AgentTxCount    uint64                         `json:"agent_tx_count"`
+	MintPaused      bool                           `json:"mint_paused"`
+	MintPauseUntil  int64                          `json:"mint_pause_until"`
 }
 
 type Snapshot struct {
@@ -413,12 +437,4 @@ for _, tx := range transactions {
 		hashes = next
 	}
 	return hex.EncodeToString(hashes[0])
-}
-
-func calculateHash(block Block) string {
-	clone := block
-	clone.BlockHash = ""
-	data, _ := json.Marshal(clone)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
 }

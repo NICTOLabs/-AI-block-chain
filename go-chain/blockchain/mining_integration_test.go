@@ -2,6 +2,7 @@ package blockchain
 
 import (
 	"testing"
+	"time"
 )
 
 func TestMineBlockIncludesSignedTransfer(t *testing.T) {
@@ -52,5 +53,31 @@ func TestMineBlockIncludesSignedTransfer(t *testing.T) {
 	}
 	if len(bc.Chain) != 2 {
 		t.Fatalf("expected chain height 2, got %d", len(bc.Chain))
+	}
+}
+
+func TestMintingPauseBlocksNewBlocks(t *testing.T) {
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	bc.AddAccount("miner", 1000, false)
+	initialHeight := len(bc.Chain)
+
+	bc.PauseMinting(2 * time.Minute)
+	if _, err := bc.MineBlockFor("miner"); err == nil {
+		t.Fatal("expected mining to fail while minting is paused")
+	}
+	if len(bc.Chain) != initialHeight {
+		t.Fatalf("expected chain height to stay at %d, got %d", initialHeight, len(bc.Chain))
+	}
+
+	bc.ResumeMinting()
+	block, err := bc.MineBlockFor("miner")
+	if err != nil {
+		t.Fatalf("expected mining to succeed after resume: %v", err)
+	}
+	if block == nil {
+		t.Fatal("expected mined block after resume")
+	}
+	if len(bc.Chain) != initialHeight+1 {
+		t.Fatalf("expected chain height to increase to %d, got %d", initialHeight+1, len(bc.Chain))
 	}
 }

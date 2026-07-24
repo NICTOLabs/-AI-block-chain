@@ -19,6 +19,7 @@ type NodeInfo struct {
 type p2pMessage struct {
 	Type  string          `json:"type"`
 	From  string          `json:"from,omitempty"`
+	NodeID string         `json:"node_id,omitempty"`
 	Block *blockchain.Block       `json:"block,omitempty"`
 	Chain []blockchain.Block      `json:"chain,omitempty"`
 	Tx    *blockchain.Transaction `json:"tx,omitempty"`
@@ -37,6 +38,23 @@ type P2PNode struct {
 	strictMode   bool
 	nodeSecret   string
 	mutedPeers   map[string]time.Time
+	peerRateLimits map[string][]time.Time
+}
+
+func (p2p *P2PNode) allowPeerRate(remote string) bool {
+	now := time.Now()
+	entries := p2p.peerRateLimits[remote]
+	kept := entries[:0]
+	for _, ts := range entries {
+		if now.Sub(ts) <= time.Minute {
+			kept = append(kept, ts)
+		}
+	}
+	if len(kept) >= 300 {
+		return false
+	}
+	p2p.peerRateLimits[remote] = append(kept, now)
+	return true
 }
 
 func (p2p *P2PNode) Start() {
@@ -110,6 +128,17 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 			blockchain.LogJSON("p2p_decode", remote, err.Error())
 			return
 		}
+		if !p2p.allowPeerRate(remote) {
+			return
+		}
+		if msg.NodeID != "" {
+			if p2p.trustedPeers[msg.From] && p2p.peerScores[msg.From] > 0 {
+				p2p.peerScores[msg.From]++
+			} else {
+				p2p.peerScores[msg.From] = 1
+				p2p.trustedPeers[msg.From] = true
+			}
+		}
 		if msg.Type == "block" && msg.Block != nil {
 			p2p.chain.Lock()
 			if len(msg.Chain) > 0 {
@@ -169,14 +198,15 @@ func (p2p *P2PNode) WriteMessage(conn net.Conn, msg p2pMessage) error {
 
 func NewP2PNode(addr string, peers []string, chain *blockchain.Blockchain, strictMode bool) *P2PNode {
 	return &P2PNode{
-		addr:         addr,
-		peers:        peers,
-		peerScores:   make(map[string]int),
-		trustedPeers: make(map[string]bool),
-		chain:        chain,
-		shutdown:     make(chan struct{}),
-		maxPeers:     50,
-		strictMode:   strictMode,
+		addr:           addr,
+		peers:          peers,
+		peerScores:     make(map[string]int),
+		trustedPeers:   make(map[string]bool),
+		chain:          chain,
+		shutdown:       make(chan struct{}),
+		maxPeers:       50,
+		strictMode:     strictMode,
+		peerRateLimits: make(map[string][]time.Time),
 	}
 }
 

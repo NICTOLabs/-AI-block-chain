@@ -1,0 +1,72 @@
+{
+  "chain": [
+    {
+      "index": 0,
+      "author": "genesis",
+      "previous_hash": "0",
+      "timestamp": 1784750149,
+      "transactions": [],
+      "nonce": 0,
+      "block_hash": "genesis"
+    }
+  ],
+  "pending": [],
+  "ledger": {
+    "agentA": {
+      "address": "agentA",
+      "balance": 90000,
+      "staked": 10000,
+      "is_agent": true
+    },
+    "agentB": {
+      "address": "agentB",
+      "balance": 50000,
+      "staked": 0,
+      "is_agent": true
+    },
+    "human1": {
+      "address": "human1",
+      "balance": 1000000,
+      "staked": 0,
+      "is_agent": false
+    }
+  },
+  "registry": {},
+  "consensus": "pos",
+  "authorities": [
+    "agentA"
+  ],
+  "token_supply": 1000000000,
+  "escrows": {},
+  "proposals": {},
+  "agreements": {},
+  "usage_meters": {},
+  "used_nonces": {},
+  "seen_tx_ids": {},
+  "audit_trail": [
+    {
+      "timestamp": 1784750149,
+      "event": "account_created",
+      "actor": "human1",
+      "details": "balance=1000000 agent=false"
+    },
+    {
+      "timestamp": 1784750149,
+      "event": "account_created",
+      "actor": "agentA",
+      "details": "balance=100000 agent=true"
+    },
+    {
+      "timestamp": 1784750149,
+      "event": "account_created",
+      "actor": "agentB",
+      "details": "balance=50000 agent=true"
+    },
+    {
+      "timestamp": 1784750149,
+      "event": "stake",
+      "actor": "agentA",
+      "details": "amount=10000"
+    }
+  ]
+}

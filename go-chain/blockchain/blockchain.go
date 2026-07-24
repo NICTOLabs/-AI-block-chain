@@ -53,6 +53,8 @@ type Blockchain struct {
 	FinalizedBlocks map[uint64]struct{}
 	LastFinalized   uint64
 	AgentTxCount    uint64
+	MintPaused      bool
+	MintPauseUntil  int64
 	metrics         *serverMetrics
 }
 
@@ -134,13 +136,19 @@ func (bc *Blockchain) SaveToDisk() error {
 		FinalizedBlocks: bc.FinalizedBlocks,
 		LastFinalized:   bc.LastFinalized,
 		AgentTxCount:    bc.AgentTxCount,
+		MintPaused:      bc.MintPaused,
+		MintPauseUntil:  bc.MintPauseUntil,
 	}
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(bc.DataDir, "chain.json")
-	return os.WriteFile(path, payload, 0o644)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (bc *Blockchain) LoadFromDisk() error {
@@ -170,6 +178,8 @@ func (bc *Blockchain) LoadFromDisk() error {
 	bc.FinalizedBlocks = state.FinalizedBlocks
 	bc.LastFinalized = state.LastFinalized
 	bc.AgentTxCount = state.AgentTxCount
+	bc.MintPaused = state.MintPaused
+	bc.MintPauseUntil = state.MintPauseUntil
 	for from, nonceMap := range bc.UsedNonces {
 		maxNonce := uint64(0)
 		for nonce := range nonceMap {
@@ -542,6 +552,9 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
+	if bc.MintPaused && bc.MintPauseUntil > 0 && time.Now().Unix() < bc.MintPauseUntil {
+		return nil, fmt.Errorf("minting is currently paused")
+	}
 	if len(bc.Chain) == 0 {
 		bc.createGenesisBlock()
 	}
@@ -573,6 +586,17 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 			if tx.Fee < fee {
 				atomic.AddInt64(&bc.metrics.txRejected, 1)
 				continue
+			}
+			if tx.Fee > 0 {
+				totalBurn := tx.Fee * BurnRatePercent / 100
+				permanentBurn := totalBurn * 70 / 100
+				communityFund := totalBurn - permanentBurn
+				bc.TokenSupply -= permanentBurn
+				if cfAcct := bc.Ledger[CommunityFundAddress]; cfAcct != nil {
+					cfAcct.Balance += communityFund
+				} else {
+					bc.Ledger[CommunityFundAddress] = &Account{Address: CommunityFundAddress, Balance: communityFund, Staked: 0, IsAgent: false}
+				}
 			}
 			block.Transactions = append(block.Transactions, tx)
 			bc.markTransactionSeen(tx)
@@ -922,6 +946,40 @@ func (bc *Blockchain) IsFinalized(index uint64) bool {
 	return ok
 }
 
+func (bc *Blockchain) PauseMinting(duration time.Duration) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	bc.MintPaused = true
+	bc.MintPauseUntil = time.Now().Add(duration).Unix()
+	bc.appendAuditEntry("minting_paused", "system", fmt.Sprintf("until=%d", bc.MintPauseUntil))
+}
+
+func (bc *Blockchain) ResumeMinting() {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	bc.MintPaused = false
+	bc.MintPauseUntil = 0
+	bc.appendAuditEntry("minting_resumed", "system", "resumed")
+}
+
+func (bc *Blockchain) IsMintingPaused() bool {
+	bc.mu.RLock()
+	paused := bc.MintPaused
+	until := bc.MintPauseUntil
+	bc.mu.RUnlock()
+	if !paused {
+		return false
+	}
+	if until == 0 || time.Now().Unix() >= until {
+		bc.mu.Lock()
+		bc.MintPaused = false
+		bc.MintPauseUntil = 0
+		bc.mu.Unlock()
+		return false
+	}
+	return true
+}
+
 func (bc *Blockchain) RLock()   { bc.mu.RLock() }
 func (bc *Blockchain) RUnlock() { bc.mu.RUnlock() }
 
@@ -940,3 +998,74 @@ func (m *serverMetrics) recordRequest(ok bool) {
 
 func (bc *Blockchain) Lock()   { bc.mu.Lock() }
 func (bc *Blockchain) Unlock() { bc.mu.Unlock() }
+
+type genesisFile struct {
+	ChainID       string `json:"chain_id"`
+	InitialSupply uint64 `json:"initial_supply"`
+	MaxSupply     uint64 `json:"max_supply"`
+	Allocations   []struct {
+		Address   string `json:"address"`
+		PublicKey string `json:"public_key"`
+		Amount    uint64 `json:"amount"`
+	} `json:"allocations"`
+	Validators []struct {
+		Address   string `json:"address"`
+		PublicKey string `json:"public_key"`
+		Stake     uint64 `json:"stake"`
+	} `json:"validators"`
+}
+
+func (bc *Blockchain) LoadGenesis(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var genesis genesisFile
+	if err := json.Unmarshal(data, &genesis); err != nil {
+		return err
+	}
+	if genesis.ChainID != "" {
+		bc.ChainID = genesis.ChainID
+	}
+	bc.TokenSupply = 0
+	for _, alloc := range genesis.Allocations {
+		if alloc.Address == "" {
+			return fmt.Errorf("genesis allocation missing address")
+		}
+		if alloc.Amount > MaxSupply {
+			return fmt.Errorf("genesis allocation exceeds max supply")
+		}
+		bc.addAccountLocked(alloc.Address, alloc.Amount, false)
+		bc.TokenSupply += alloc.Amount
+	}
+	for _, val := range genesis.Validators {
+		if val.Address == "" {
+			return fmt.Errorf("genesis validator missing address")
+		}
+		if val.Stake < MinStake {
+			return fmt.Errorf("genesis validator stake below minimum")
+		}
+		bc.TokenSupply += val.Stake
+		if acct := bc.Ledger[val.Address]; acct != nil {
+			acct.IsAgent = false
+			acct.Staked = val.Stake
+			acct.Balance -= val.Stake
+		} else {
+			bc.addAccountLocked(val.Address, val.Stake, false)
+			bc.Ledger[val.Address].Staked = val.Stake
+		}
+		bc.Validators[val.Address] = Validator{
+			Address:     val.Address,
+			Stake:       val.Stake,
+			Active:      true,
+			JoinedAt:    time.Now().Unix(),
+			Performance: 100,
+		}
+		bc.AddAuthority(val.Address)
+	}
+	if bc.TokenSupply > MaxSupply {
+		return fmt.Errorf("genesis total supply exceeds max supply: %d > %d", bc.TokenSupply, MaxSupply)
+	}
+	bc.appendAuditEntry("genesis_loaded", "system", fmt.Sprintf("chain_id=%s supply=%d allocations=%d validators=%d", bc.ChainID, bc.TokenSupply, len(genesis.Allocations), len(genesis.Validators)))
+	return nil
+}

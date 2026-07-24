@@ -6,6 +6,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -106,5 +108,44 @@ func TestCanonicalSigningBytesStable(t *testing.T) {
 		if got := CanonicalSigningBytes(tx); !bytes.Equal(got, first) {
 			t.Fatal("canonical signing bytes are not stable")
 		}
+	}
+}
+
+func TestLoadGenesisRejectsMissingAddress(t *testing.T) {
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	tmp := filepath.Join(t.TempDir(), "genesis.json")
+	data := []byte(`{"chain_id":"bad-genesis","allocations":[{"amount":10}],"validators":[]}`)
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		t.Fatalf("write genesis: %v", err)
+	}
+	if err := bc.LoadGenesis(tmp); err == nil {
+		t.Fatal("expected loadGenesis to reject missing address")
+	}
+}
+
+func TestLoadGenesisRejectsExceedingMaxSupply(t *testing.T) {
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	tmp := filepath.Join(t.TempDir(), "genesis.json")
+	data := []byte(`{"chain_id":"bad-genesis","initial_supply":1000000000000000002,"max_supply":1000000000000000000,"allocations":[{"address":"addr","amount":1000000000000000002,"public_key":"pub"}],"validators":[]}`)
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		t.Fatalf("write genesis: %v", err)
+	}
+	if err := bc.LoadGenesis(tmp); err == nil {
+		t.Fatal("expected loadGenesis to reject supply above max")
+	}
+}
+
+func TestLoadGenesisAcceptsValidAllocations(t *testing.T) {
+	bc := NewBlockchain(ProofOfStake, t.TempDir(), "tdr-testnet-1")
+	tmp := filepath.Join(t.TempDir(), "genesis.json")
+	data := []byte(`{"chain_id":"valid","max_supply":1000000000000000000,"allocations":[{"address":"abc","amount":500,"public_key":"pub"}],"validators":[{"address":"abc","stake":1000000000}]}`)
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		t.Fatalf("write genesis: %v", err)
+	}
+	if err := bc.LoadGenesis(tmp); err != nil {
+		t.Fatalf("expected loadGenesis to accept valid genesis: %v", err)
+	}
+	if bc.TokenSupply != 1000000500 {
+		t.Fatalf("expected token supply 1000000500, got %d", bc.TokenSupply)
 	}
 }

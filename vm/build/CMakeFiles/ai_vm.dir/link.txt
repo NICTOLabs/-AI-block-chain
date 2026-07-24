@@ -1,0 +1,2 @@
+/usr/bin/ar qc libai_vm.a CMakeFiles/ai_vm.dir/src/vm.cpp.o CMakeFiles/ai_vm.dir/src/opcodes.cpp.o CMakeFiles/ai_vm.dir/src/gas.cpp.o
+/usr/bin/ranlib libai_vm.a
