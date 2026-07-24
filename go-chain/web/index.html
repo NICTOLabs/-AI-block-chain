@@ -83,8 +83,9 @@
 
     <script>
         const API = window.TDR_API || 'http://localhost:8080';
-
+        
         function formatTender(amount) {
+            amount = Number(amount || 0);
             const tender = Math.floor(amount / 10000000);
             const hogohogo = amount % 10000000;
             return tender + ' TENDER ' + String(hogohogo).padStart(7, '0') + ' HOGOHOGO';

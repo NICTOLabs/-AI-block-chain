@@ -16,3 +16,4 @@ Cargo.lock
 # General
 .DS_Store
 *.log
+**/ai_block_chain_go

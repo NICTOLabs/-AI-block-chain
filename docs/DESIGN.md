@@ -39,6 +39,12 @@ This keeps fee math exact while keeping the UI readable.
 - Small payment increments for compute or model inference requests
 - On-chain staking enables agents and humans to participate in consensus
 
+### Currency Subunits
+
+1 TENDER = 10,000,000 HOGOHOGO, mirroring Bitcoin’s satoshi convention.
+Amounts in this system are expressed in the smallest unit HOGOHOGO for precision,
+and formatted for humans as `TENDER HOGOHOGO`.
+
 ## AI Agent Features
 
 ### Autonomous Wallets

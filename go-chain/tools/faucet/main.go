@@ -1,12 +1,8 @@
 package main
 
-import (
-	"fmt"
-	"os"
-)
+import "fmt"
 
 func main() {
-	fmt.Fprintf(os.Stderr, "Usage: faucet [server]\n")
-	fmt.Fprintf(os.Stderr, "  server  start the faucet server\n")
-	os.Exit(1)
+	fmt.Println("TENDER faucet tool")
+	fmt.Println("Usage: faucet --address <address> --amount <hogohogo>")
 }
