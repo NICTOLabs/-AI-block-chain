@@ -40,6 +40,7 @@ type Transaction struct {
 	Fee        uint64          `json:"fee,omitempty"`
 	Nonce      uint64          `json:"nonce,omitempty"`
 	TxType     TransactionType `json:"tx_type"`
+	ChainID    string          `json:"chain_id,omitempty"`
 	Payload    string          `json:"payload,omitempty"`
 	Signature  string          `json:"signature,omitempty"`
 	Timestamp  int64           `json:"timestamp"`
@@ -154,6 +155,7 @@ type Blockchain struct {
 	Ledger       map[string]*Account
 	Registry     map[string]ModelEntry
 	Consensus    ConsensusType
+	ChainID      string
 	Authorities  []string
 	validatorIdx int
 	DataDir      string
@@ -167,6 +169,7 @@ type Blockchain struct {
 	AuditTrail   []AuditEntry
 	Wallets      map[string]ManagedWallet
 	Validators   map[string]ValidatorInfo
+	txCounter    uint64
 }
 
 type P2PNode struct {
@@ -179,6 +182,7 @@ type P2PNode struct {
 	shutdown     chan struct{}
 	maxPeers     int
 	strictMode   bool
+	mu           sync.RWMutex
 }
 
 type serverConfig struct {
@@ -188,6 +192,11 @@ type serverConfig struct {
 	RateWindow  time.Duration
 	EnableTLS   bool
 	MetricsPath string
+	APIPort     int
+	P2PPort     int
+	DataDir     string
+	Consensus   string
+	StrictP2P   bool
 }
 
 type rateLimiter struct {
@@ -259,11 +268,14 @@ func (w *Wallet) Sign(tx Transaction) Transaction {
 func (tx Transaction) signingPayload() []byte {
 	clone := tx
 	clone.Signature = ""
-	data, _ := json.Marshal(clone)
+	data, err := json.Marshal(clone)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal signing payload: %v", err))
+	}
 	return data
 }
 
-func NewBlockchain(consensus ConsensusType, dataDir string) *Blockchain {
+func NewBlockchain(consensus ConsensusType, dataDir string, chainID ...string) *Blockchain {
 	bc := &Blockchain{
 		Chain:       []Block{},
 		Pending:     []Transaction{},
@@ -282,6 +294,10 @@ func NewBlockchain(consensus ConsensusType, dataDir string) *Blockchain {
 		AuditTrail:  []AuditEntry{},
 		Wallets:     make(map[string]ManagedWallet),
 		Validators:  make(map[string]ValidatorInfo),
+	}
+	bc.ChainID = "tdr-mainnet-1"
+	if len(chainID) > 0 && chainID[0] != "" {
+		bc.ChainID = chainID[0]
 	}
 	bc.createGenesisBlock()
 	_ = os.MkdirAll(dataDir, 0o755)
@@ -391,14 +407,14 @@ func (bc *Blockchain) AddAccount(address string, balance uint64, isAgent bool) {
 }
 
 func (bc *Blockchain) CreateManagedWallet(label string, isAgent bool) (ManagedWallet, error) {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
 	wallet := NewWallet()
 	address := wallet.Address()
 	bc.AddAccount(address, 1000, isAgent)
+	bc.mu.Lock()
 	managed := ManagedWallet{ID: fmt.Sprintf("wallet-%d", time.Now().UnixNano()), Address: address, PublicKey: hex.EncodeToString(wallet.PublicKey), Label: label, IsAgent: isAgent}
 	bc.Wallets[managed.ID] = managed
 	bc.appendAuditEntry("wallet_created", address, fmt.Sprintf("label=%s agent=%t", label, isAgent))
+	bc.mu.Unlock()
 	return managed, nil
 }
 
@@ -449,8 +465,6 @@ func (bc *Blockchain) estimateFee(tx Transaction, congestion int) uint64 {
 }
 
 func (bc *Blockchain) DistributeRewards() {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
 	for address, account := range bc.Ledger {
 		if account.Staked > 0 {
 			reward := account.Staked * RewardRatePercent / 100
@@ -526,7 +540,8 @@ func (bc *Blockchain) EnqueueTransaction(tx Transaction) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	if tx.ID == "" {
-		tx.ID = fmt.Sprintf("tx-%d", time.Now().UnixNano())
+		bc.txCounter++
+		tx.ID = fmt.Sprintf("tx-%d", bc.txCounter)
 	}
 	if bc.isReplay(tx) {
 		bc.appendAuditEntry("transaction_rejected", tx.From, fmt.Sprintf("tx_id=%s nonce=%d", tx.ID, tx.Nonce))
@@ -583,8 +598,12 @@ func (bc *Blockchain) MineBlock() (*Block, error) {
 			bc.markTransactionSeen(tx)
 		}
 	}
-	block = bc.proofOfWork(block)
-	if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
+		var err error
+		block, err = bc.proofOfWork(block)
+		if err != nil {
+			return nil, err
+		}
+		if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
 		return nil, err
 	}
 	bc.applyBlock(block)
@@ -648,15 +667,17 @@ func (bc *Blockchain) validatorSet() []ValidatorInfo {
 	return infos
 }
 
-func (bc *Blockchain) proofOfWork(block Block) Block {
-	for {
+func (bc *Blockchain) proofOfWork(block Block) (Block, error) {
+	const maxNonce = 10_000_000
+	for i := uint64(0); i < maxNonce; i++ {
 		hash := calculateHash(block)
 		if len(hash) >= 4 && hash[:4] == "0000" {
 			block.BlockHash = hash
-			return block
+			return block, nil
 		}
 		block.Nonce++
 	}
+	return block, fmt.Errorf("proof of work failed after %d iterations", maxNonce)
 }
 
 func (bc *Blockchain) computeChainWork(chain []Block) uint64 {
@@ -742,6 +763,9 @@ func (bc *Blockchain) replaceChain(newChain []Block) bool {
 }
 
 func (bc *Blockchain) validateTransaction(tx Transaction) bool {
+	if tx.ChainID != bc.ChainID {
+		return false
+	}
 	if !verifyTransaction(tx) {
 		return false
 	}
@@ -771,9 +795,6 @@ func (bc *Blockchain) validateTransaction(tx Transaction) bool {
 }
 
 func (bc *Blockchain) isReplay(tx Transaction) bool {
-	if tx.Nonce == 0 {
-		return false
-	}
 	if tx.ID != "" {
 		if _, seen := bc.SeenTxIDs[tx.ID]; seen {
 			return true
@@ -891,7 +912,10 @@ func (bc *Blockchain) snapshot() nodeState {
 func calculateHash(block Block) string {
 	clone := block
 	clone.BlockHash = ""
-	data, _ := json.Marshal(clone)
+	data, err := json.Marshal(clone)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal block for hashing: %v", err))
+	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
@@ -915,7 +939,8 @@ func verifyTransaction(tx Transaction) bool {
 	if len(sig) != ed25519.SignatureSize {
 		return false
 	}
-	return ed25519.Verify(ed25519.PublicKey(pubKey), tx.signingPayload(), sig)
+	payload := tx.signingPayload()
+	return ed25519.Verify(ed25519.PublicKey(pubKey), payload, sig)
 }
 
 func consensusName(consensus ConsensusType) string {
@@ -937,10 +962,14 @@ func main() {
 	dataDir := flag.String("data-dir", "./data", "Directory to persist blockchain state")
 	consensus := flag.String("consensus", "pos", "Consensus type: pos or poa")
 	strictP2P := flag.Bool("strict-p2p", true, "Reject untrusted or duplicate peers")
-	apiKey := flag.String("api-key", "change-me-in-production", "API key required for protected endpoints")
+	apiKey := flag.String("api-key", "", "API key required for protected endpoints (MUST be set in production)")
 	enableAuth := flag.Bool("enable-auth", true, "Require API key auth for mutating endpoints")
 	rateLimit := flag.Int("rate-limit", 60, "Requests per minute per client")
 	flag.Parse()
+
+	if *apiKey == "" {
+		log.Fatal("API key must be set via --api-key or TENDER_API_KEY env var")
+	}
 
 	var chainConsensus ConsensusType
 	if strings.ToLower(*consensus) == "poa" {
@@ -987,7 +1016,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		if !limiter.allow(r.RemoteAddr) {
+		if !limiter.allow(clientIP(r)) {
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
@@ -1006,7 +1035,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		if !limiter.allow(r.RemoteAddr) {
+		if !limiter.allow(clientIP(r)) {
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
@@ -1035,7 +1064,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		if !limiter.allow(r.RemoteAddr) {
+		if !limiter.allow(clientIP(r)) {
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
@@ -1044,6 +1073,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			return
 		}
 		var tx Transaction
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&tx); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -1095,6 +1125,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			Address string `json:"address"`
 			Amount  uint64 `json:"amount"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -1121,6 +1152,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			Label   string `json:"label"`
 			IsAgent bool   `json:"is_agent"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -1139,7 +1171,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		if !limiter.allow(r.RemoteAddr) {
+		if !limiter.allow(clientIP(r)) {
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
@@ -1148,6 +1180,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			return
 		}
 		var payload Transaction
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -1182,6 +1215,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			Amount    uint64 `json:"amount"`
 			ServiceID string `json:"service_id"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -1204,6 +1238,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			Title       string `json:"title"`
 			Description string `json:"description"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -1225,6 +1260,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			PricePerCall uint64 `json:"price_per_call"`
 			MaxCalls     uint64 `json:"max_calls"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -1247,6 +1283,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			AgreementID string `json:"agreement_id"`
 			UsageCount  uint64 `json:"usage_count"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -1307,14 +1344,16 @@ func (p2p *P2PNode) connectToPeers() {
 			break
 		}
 		go func(target string) {
-			conn, err := net.Dial("tcp", target)
+			conn, err := net.DialTimeout("tcp", target, 5*time.Second)
 			if err != nil {
 				log.Printf("connect to peer %s: %v", target, err)
 				return
 			}
 			defer conn.Close()
+			p2p.mu.Lock()
 			p2p.peerScores[target] = 1
 			p2p.trustedPeers[target] = true
+			p2p.mu.Unlock()
 			_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers}})
 			p2p.handleConn(conn)
 		}(peer)
@@ -1342,13 +1381,12 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 			continue
 		}
 		if msg.Type == "block" && msg.Block != nil {
-			p2p.chain.mu.Lock()
 			if len(msg.Chain) > 0 {
 				if p2p.chain.replaceChain(msg.Chain) {
-					p2p.chain.mu.Unlock()
 					continue
 				}
 			}
+			p2p.chain.mu.Lock()
 			if len(p2p.chain.Chain) < int(msg.Block.Index)+1 || p2p.chain.Chain[len(p2p.chain.Chain)-1].BlockHash != msg.Block.PreviousHash {
 				p2p.chain.Chain = append(p2p.chain.Chain, *msg.Block)
 				_ = p2p.chain.saveToDisk()
@@ -1359,7 +1397,9 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 			p2p.chain.EnqueueTransaction(*msg.Tx)
 		}
 		if msg.Type == "hello" && msg.Peer != nil {
+			p2p.mu.Lock()
 			if p2p.strictMode && len(p2p.peers) >= p2p.maxPeers {
+				p2p.mu.Unlock()
 				continue
 			}
 			if msg.Peer.Address != "" && msg.Peer.Address != p2p.addr {
@@ -1367,6 +1407,7 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 				p2p.peerScores[msg.Peer.Address] = 1
 				p2p.trustedPeers[msg.Peer.Address] = true
 			}
+			p2p.mu.Unlock()
 		}
 	}
 }
@@ -1374,8 +1415,10 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 func (p2p *P2PNode) broadcastBlock(block *Block) {
 	msg := p2pMessage{Type: "block", Block: block}
 	payload, _ := json.Marshal(msg)
-	p2p.peers = append(p2p.peers, p2p.addr)
-	for _, peer := range p2p.peers {
+	p2p.mu.RLock()
+	peers := append([]string(nil), p2p.peers...)
+	p2p.mu.RUnlock()
+	for _, peer := range peers {
 		if peer == "" || peer == p2p.addr || !p2p.trustedPeers[peer] {
 			continue
 		}
@@ -1398,6 +1441,16 @@ func (p2p *P2PNode) writeMessage(conn net.Conn, msg p2pMessage) error {
 	return err
 }
 
+func clientIP(r *http.Request) string {
+	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
+		return strings.TrimSpace(strings.Split(ip, ",")[0])
+	}
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		return strings.TrimSpace(ip)
+	}
+	return r.RemoteAddr
+}
+
 func requireAuth(r *http.Request, cfg serverConfig) error {
 	if !cfg.EnableAuth {
 		return nil
@@ -1418,6 +1471,49 @@ func requireAuth(r *http.Request, cfg serverConfig) error {
 		return fmt.Errorf("invalid api key")
 	}
 	return nil
+}
+
+func serverConfigFromEnv() serverConfig {
+	return serverConfig{
+		APIKey:      getEnvOrDefault("TENDER_API_KEY", ""),
+		EnableAuth:  getEnvBoolOrDefault("TENDER_ENABLE_AUTH", true),
+		RateLimit:   getEnvIntOrDefault("TENDER_RATE_LIMIT", 60),
+		RateWindow:  time.Duration(getEnvIntOrDefault("TENDER_RATE_WINDOW_SECONDS", 60)) * time.Second,
+		EnableTLS:   getEnvBoolOrDefault("TENDER_ENABLE_TLS", false),
+		MetricsPath: getEnvOrDefault("TENDER_METRICS_PATH", "/metrics"),
+		APIPort:     getEnvIntOrDefault("TENDER_API_PORT", 8080),
+		P2PPort:     getEnvIntOrDefault("TENDER_P2P_PORT", 3030),
+		DataDir:     getEnvOrDefault("TENDER_DATA_DIR", "./data"),
+		Consensus:   getEnvOrDefault("TENDER_CONSENSUS", "pos"),
+		StrictP2P:   getEnvBoolOrDefault("TENDER_STRICT_P2P", true),
+	}
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func getEnvBoolOrDefault(key string, fallback bool) bool {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err == nil {
+			return b
+		}
+	}
+	return fallback
+}
+
+func getEnvIntOrDefault(key string, fallback int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil {
+			return n
+		}
+	}
+	return fallback
 }
 
 func newRateLimiter(limit int, window time.Duration) *rateLimiter {

@@ -1,10 +1,11 @@
+use reqwest::blocking::Client;
 use serde_json::Value;
-use std::process::Command;
 
 /// A minimal Rust client for the Tender node RPC layer.
 #[derive(Debug, Clone)]
 pub struct TenderClient {
     base_url: String,
+    client: Client,
 }
 
 impl TenderClient {
@@ -12,30 +13,21 @@ impl TenderClient {
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
+            client: Client::new(),
         }
     }
 
     /// Return the health payload from the node.
     pub fn health(&self) -> Result<Value, String> {
-        let output = Command::new("curl")
-            .arg("-s")
-            .arg("-H")
-            .arg("Accept: application/json")
-            .arg(format!("{}/health", self.base_url))
-            .output()
-            .map_err(|err| format!("failed to invoke curl: {err}"))?;
+        let url = format!("{}/health", self.base_url);
+        let response = self.client.get(&url).send().map_err(|err| format!("request failed: {err}"))?;
 
-        if !output.status.success() {
-            return Err(format!(
-                "health request failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
+        if !response.status().is_success() {
+            return Err(format!("health request failed: {}", response.status()));
         }
 
-        let body = String::from_utf8(output.stdout)
-            .map_err(|err| format!("health response was not valid UTF-8: {err}"))?;
-
-        serde_json::from_str(&body).map_err(|err| format!("invalid health response: {err}"))
+        let payload = response.json::<Value>().map_err(|err| format!("invalid health response: {err}"))?;
+        Ok(payload)
     }
 }
 

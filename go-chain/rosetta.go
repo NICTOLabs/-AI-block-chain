@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -223,6 +224,7 @@ func RosettaConstructionSubmitHandler(bc *Blockchain) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		var req RosettaConstructionSubmitRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -239,23 +241,21 @@ func RosettaConstructionSubmitHandler(bc *Blockchain) http.HandlerFunc {
 			return
 		}
 
+		// Set chain ID from network identifier
+		tx.ChainID = req.NetworkIdentifier.Network
+		if tx.ChainID == "" {
+			tx.ChainID = bc.ChainID
+		}
+
+		// Validate transaction through the same path as the main API
+		if !bc.validateTransaction(tx) {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid transaction"})
+			return
+		}
+
 		bc.mu.Lock()
-		tx.ID = fmt.Sprintf("tx-%d", time.Now().UnixNano())
-		if tx.Nonce == 0 {
-			tx.Nonce = uint64(len(bc.Pending) + 1)
-		}
-		tx.Timestamp = time.Now().Unix()
-
-		if tx.Signature == "" && len(req.PublicKeys) > 0 {
-			pubBytes, err := hex.DecodeString(req.PublicKeys[0].Bytes)
-			if err == nil {
-				if len(pubBytes) == sha256.Size {
-					tx.From = hex.EncodeToString(pubBytes)
-				}
-			}
-		}
-
-		bc.Pending = append(bc.Pending, tx)
+		bc.SubmitTransaction(tx)
 		bc.mu.Unlock()
 
 		txID := tx.ID
@@ -353,10 +353,21 @@ func validateRosettaSignature(tx Transaction, pubHex, sigHex string) bool {
 	if err != nil {
 		return false
 	}
-	_ = sigHex
-	raw, _ := json.Marshal(tx)
-	sum := sha256.Sum256(raw)
-	return bytes.Equal(sum[:], pub)
+	sig, err := hex.DecodeString(sigHex)
+	if err != nil {
+		return false
+	}
+	if len(pub) != ed25519.PublicKeySize {
+		return false
+	}
+	if len(sig) != ed25519.SignatureSize {
+		return false
+	}
+	raw, err := json.Marshal(tx.signingPayload())
+	if err != nil {
+		return false
+	}
+	return ed25519.Verify(ed25519.PublicKey(pub), raw, sig)
 }
 
 func rosettaTxToCanonicalJSON(tx Transaction) string {

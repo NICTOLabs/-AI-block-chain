@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -32,7 +33,7 @@ type Snapshot struct {
 	UsedNonces    map[string]map[uint64]struct{} `json:"used_nonces"`
 	NextNonce     map[string]uint64      `json:"next_nonce"`
 	SeenTxIDs     map[string]struct{}     `json:"seen_tx_ids"`
-	Validators    map[string]Validator      `json:"validators"`
+	Validators    map[string]ValidatorInfo `json:"validators"`
 	AuditTrail    []AuditEntry         `json:"audit_trail"`
 	TokenSupply   uint64               `json:"token_supply"`
 	Wallets       map[string]ManagedWallet `json:"managed_wallets"`
@@ -70,22 +71,22 @@ func (s *StateStore) loadLatest() error {
 		return err
 	}
 	var latest string
-	var latestHeight uint64
+	var latestMod time.Time
 	for _, f := range files {
 		if f.IsDir() {
 			continue
 		}
 		name := f.Name()
-		if len(name) < 12 || name[:8] != "snapshot" {
+		if len(name) < 12 || name[:8] != "snapshot" || !strings.HasSuffix(name, ".json.gz") {
 			continue
 		}
-		var h uint64
-		if _, err := fmt.Sscanf(name, "snapshot_%d.json.gz", &h); err != nil {
+		info, err := f.Info()
+		if err != nil {
 			continue
 		}
-		if h > latestHeight {
-			latestHeight = h
+		if latest == "" || info.ModTime().After(latestMod) {
 			latest = name
+			latestMod = info.ModTime()
 		}
 	}
 	if latest == "" {
@@ -100,7 +101,7 @@ func (s *StateStore) loadLatest() error {
 			UsedNonces: make(map[string]map[uint64]struct{}),
 			NextNonce:  make(map[string]uint64),
 			SeenTxIDs:  make(map[string]struct{}),
-			Validators: make(map[string]Validator),
+			Validators: make(map[string]ValidatorInfo),
 			Wallets:    make(map[string]ManagedWallet),
 		}
 		return nil
@@ -131,10 +132,6 @@ func (s *StateStore) readSnapshot(path string) error {
 func (s *StateStore) WriteSnapshot(snap *Snapshot) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	height := uint64(len(snap.Header.ChainID))
-	if len(s.latest.Header.ChainID) > 0 {
-		height++
-	}
 	payload, err := json.Marshal(snap)
 	if err != nil {
 		return "", err
@@ -172,7 +169,7 @@ func (s *StateStore) Snapshot() *Snapshot {
 		UsedNonces: make(map[string]map[uint64]struct{}),
 		NextNonce:  make(map[string]uint64),
 		SeenTxIDs:  make(map[string]struct{}),
-		Validators: make(map[string]Validator),
+		Validators: make(map[string]ValidatorInfo),
 		Wallets:    make(map[string]ManagedWallet),
 	}
 	for k, v := range s.latest.Accounts {

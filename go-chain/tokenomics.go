@@ -165,7 +165,7 @@ func (cfg TokenomicsConfig) ApplyStakingRewards(block *Blockchain, blockHeight u
 	block.mu.Lock()
 	defer block.mu.Unlock()
 
-	validators := make([]Validator, 0)
+	validators := make([]ValidatorInfo, 0)
 	for _, v := range block.Validators {
 		if v.Active {
 			validators = append(validators, v)

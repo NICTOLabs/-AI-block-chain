@@ -98,13 +98,35 @@ struct Wallet {
 
     Wallet() {
         EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(NID_ED25519, nullptr);
-        EVP_PKEY_keygen_init(ctx);
-        EVP_PKEY_keygen(ctx, &keypair);
+        if (!ctx) {
+            public_key_hex = "";
+            address = "";
+            keypair = nullptr;
+            return;
+        }
+        if (EVP_PKEY_keygen_init(ctx) != 1) {
+            EVP_PKEY_CTX_free(ctx);
+            public_key_hex = "";
+            address = "";
+            keypair = nullptr;
+            return;
+        }
+        if (EVP_PKEY_keygen(ctx, &keypair) != 1) {
+            EVP_PKEY_CTX_free(ctx);
+            public_key_hex = "";
+            address = "";
+            keypair = nullptr;
+            return;
+        }
         EVP_PKEY_CTX_free(ctx);
 
         size_t pubkey_len = 32;
         std::vector<unsigned char> pubkey(pubkey_len);
-        EVP_PKEY_get_raw_public_key(keypair, pubkey.data(), &pubkey_len);
+        if (EVP_PKEY_get_raw_public_key(keypair, pubkey.data(), &pubkey_len) != 1) {
+            public_key_hex = "";
+            address = "";
+            return;
+        }
         public_key_hex = to_hex(pubkey);
         address = sha256_string(std::string(reinterpret_cast<char*>(pubkey.data()), pubkey.size()));
     }
@@ -117,13 +139,25 @@ struct Wallet {
 
     std::string sign(const std::string& message) const {
         EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-        EVP_DigestSignInit(ctx, nullptr, nullptr, nullptr, keypair);
+        if (!ctx) {
+            return "";
+        }
+        if (EVP_DigestSignInit(ctx, nullptr, nullptr, nullptr, keypair) != 1) {
+            EVP_MD_CTX_free(ctx);
+            return "";
+        }
 
         size_t sig_len = 0;
-        EVP_DigestSign(ctx, nullptr, &sig_len, reinterpret_cast<const unsigned char*>(message.data()), message.size());
+        if (EVP_DigestSign(ctx, nullptr, &sig_len, reinterpret_cast<const unsigned char*>(message.data()), message.size()) != 1) {
+            EVP_MD_CTX_free(ctx);
+            return "";
+        }
 
         std::vector<unsigned char> signature(sig_len);
-        EVP_DigestSign(ctx, signature.data(), &sig_len, reinterpret_cast<const unsigned char*>(message.data()), message.size());
+        if (EVP_DigestSign(ctx, signature.data(), &sig_len, reinterpret_cast<const unsigned char*>(message.data()), message.size()) != 1) {
+            EVP_MD_CTX_free(ctx);
+            return "";
+        }
         EVP_MD_CTX_free(ctx);
 
         signature.resize(sig_len);
@@ -143,8 +177,19 @@ bool verify_signature(const std::string& message, const std::string& signature_h
     auto pubkey_bytes = from_hex(public_key_hex);
 
     EVP_PKEY* pubkey = EVP_PKEY_new_raw_public_key(NID_ED25519, nullptr, pubkey_bytes.data(), pubkey_bytes.size());
+    if (!pubkey) {
+        return false;
+    }
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-    EVP_DigestVerifyInit(ctx, nullptr, nullptr, nullptr, pubkey);
+    if (!ctx) {
+        EVP_PKEY_free(pubkey);
+        return false;
+    }
+    if (EVP_DigestVerifyInit(ctx, nullptr, nullptr, nullptr, pubkey) != 1) {
+        EVP_MD_CTX_free(ctx);
+        EVP_PKEY_free(pubkey);
+        return false;
+    }
     int ok = EVP_DigestVerify(ctx, sig_bytes.data(), sig_bytes.size(), reinterpret_cast<const unsigned char*>(message.data()), message.size());
     EVP_MD_CTX_free(ctx);
     EVP_PKEY_free(pubkey);
