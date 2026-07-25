@@ -1,2 +1,0 @@
-2026/07/24 12:46:19 {"event":"node_start","currency":"TENDER","api_port":8080,"p2p_port":3030,"consensus":"pos","chain_id":"tdr-mainnet-1"}
-2026/07/24 12:46:19 {"event":"api_listen","port":8080}
