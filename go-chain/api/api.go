@@ -586,6 +586,36 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": amount, "amount_formatted": blockchain.FormatAmount(amount), "balance": balance, "balance_formatted": blockchain.FormatAmount(balance)})
 	})
+	mux.HandleFunc("/api/admin/mint", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Address string `json:"address"`
+			Amount  uint64 `json:"amount"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if payload.Address == "" || payload.Amount == 0 {
+			http.Error(w, "missing address or amount", http.StatusBadRequest)
+			return
+		}
+		chain.Lock()
+		if chain.TokenSupply+payload.Amount > blockchain.MaxSupply {
+			chain.Unlock()
+			http.Error(w, "mint would exceed max supply", http.StatusBadRequest)
+			return
+		}
+		chain.AddAccount(payload.Address, payload.Amount, false)
+		chain.TokenSupply += payload.Amount
+		chain.Unlock()
+		_ = chain.SaveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": payload.Amount, "status": "minted"})
+	})
 	mux.HandleFunc("/api/token", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{

@@ -1507,6 +1507,80 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			"proposals":           chain.Proposals,
 		})
 	})
+	mux.HandleFunc("/api/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"currency_name":      CurrencyName,
+			"currency_symbol":    currencySymbol(),
+			"currency_subunit":   CurrencySubunit,
+			"subunit_factor":     HogohogoPerTender,
+			"base_fee":           BaseFee,
+			"burn_rate_percent":  BurnRatePercent,
+			"reward_rate_percent": RewardRatePercent,
+		})
+	})
+	mux.HandleFunc("/api/faucet", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Address string `json:"address"`
+			Amount  uint64 `json:"amount"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if payload.Address == "" {
+			http.Error(w, "missing address", http.StatusBadRequest)
+			return
+		}
+		amount := payload.Amount
+		if amount == 0 {
+			amount = 1000
+		}
+		chain.AddAccount(payload.Address, amount, false)
+		_ = chain.saveToDisk()
+		chain.mu.RLock()
+		balance := uint64(0)
+		if acct := chain.Ledger[payload.Address]; acct != nil {
+			balance = acct.Balance
+		}
+		chain.mu.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": amount, "balance": balance})
+	})
+	mux.HandleFunc("/api/admin/mint", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Address string `json:"address"`
+			Amount  uint64 `json:"amount"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if payload.Address == "" || payload.Amount == 0 {
+			http.Error(w, "missing address or amount", http.StatusBadRequest)
+			return
+		}
+		chain.mu.Lock()
+		if chain.TokenSupply+payload.Amount > MaxSupply {
+			chain.mu.Unlock()
+			http.Error(w, "mint would exceed max supply", http.StatusBadRequest)
+			return
+		}
+		chain.addAccountLocked(payload.Address, payload.Amount, false)
+		chain.TokenSupply += payload.Amount
+		chain.mu.Unlock()
+		_ = chain.saveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": payload.Amount, "status": "minted"})
+	})
 	mux.HandleFunc("/api/escrow", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

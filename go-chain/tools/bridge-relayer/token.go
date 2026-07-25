@@ -2,15 +2,10 @@ package main
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -116,58 +111,33 @@ func (a *TokenAdapter) mintViaFaucet(to string, amount uint64) (MintResult, erro
 }
 
 func (a *TokenAdapter) Burn(from string, amount uint64) error {
-	dataDir := filepath.Join(getTenderDataDir(), "chain.json")
-	data, err := os.ReadFile(dataDir)
+	burnURL := a.nodeAPIBase + "/api/transfer"
+	reqBody, _ := json.Marshal(map[string]any{
+		"from":   from,
+		"to":     "0000000000000000000000000000000000000000000000000000000000000000",
+		"amount": amount,
+	})
+	req, err := http.NewRequest(http.MethodPost, burnURL, bytes.NewReader(reqBody))
 	if err != nil {
-		return fmt.Errorf("read chain data failed: %v", err)
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if a.nodeAPIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+a.nodeAPIKey)
 	}
 
-	var state map[string]json.RawMessage
-	if err := json.Unmarshal(data, &state); err != nil {
-		return fmt.Errorf("parse chain data failed: %v", err)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("burn via transfer failed: %v", err)
 	}
+	defer resp.Body.Close()
 
-	var ledger map[string]struct {
-		Address  string `json:"address"`
-		Balance  uint64 `json:"balance"`
-		Staked   uint64 `json:"staked"`
-		IsAgent  bool   `json:"is_agent"`
-	}
-	if err := json.Unmarshal(state["ledger"], &ledger); err != nil {
-		return fmt.Errorf("parse ledger failed: %v", err)
-	}
-
-	acct, ok := ledger[from]
-	if !ok {
-		return fmt.Errorf("account not found: %s", from)
-	}
-	if acct.Balance < amount {
-		return fmt.Errorf("insufficient balance for burn: %d < %d", acct.Balance, amount)
-	}
-
-	acct.Balance -= amount
-	ledger[from] = acct
-
-	newLedger, _ := json.Marshal(ledger)
-	state["ledger"] = newLedger
-	newData, _ := json.MarshalIndent(state, "", "  ")
-	if err := os.WriteFile(dataDir, newData, 0o644); err != nil {
-		return fmt.Errorf("write chain data failed: %v", err)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("burn via transfer failed: %s", string(body))
 	}
 	return nil
 }
 
-func getTenderDataDir() string {
-	if d := os.Getenv("TENDER_DATA_DIR"); d != "" {
-		return d
-	}
-	return "./data"
-}
 
-func SignMintRequest(privKey []byte, txHash, to string, amount uint64) string {
-	payload := []byte(fmt.Sprintf("%s:%s:%d", txHash, to, amount))
-	key := sha256.Sum256(privKey)
-	mac := hmac.New(sha256.New, key[:])
-	mac.Write(payload)
-	return hex.EncodeToString(mac.Sum(nil))
-}

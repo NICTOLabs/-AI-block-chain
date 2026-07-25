@@ -1,5 +1,4 @@
-use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
-use rand::rngs::OsRng;
+use ed25519_dalek::{Signature, Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use thiserror::Error;
@@ -70,15 +69,10 @@ impl AgentWallet {
 
     /// Sign a transaction payload with the runtime-provided private key.
     pub fn sign_tx(&self, payload: &[u8]) -> Result<Vec<u8>, WalletError> {
-        let secret_bytes = self.pubkey.as_slice();
-        if secret_bytes.len() != 32 {
-            return Err(WalletError::KeypairGenerationFailed);
-        }
-        let secret = SecretKey::from_bytes(secret_bytes)
+        let secret_bytes: [u8; 32] = self.pubkey.as_slice().try_into()
             .map_err(|_| WalletError::KeypairGenerationFailed)?;
-        let public = PublicKey::from(&secret);
-        let keypair = Keypair { secret, public };
-        let signature: Signature = keypair.sign(payload);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        let signature: Signature = signing_key.sign(payload);
         Ok(signature.to_bytes().to_vec())
     }
 
