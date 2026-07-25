@@ -4,6 +4,5 @@ members = [
   "agent-protocol",
   "contracts",
   "sdk/rust",
-  "rust-chain",
 ]
 resolver = "2"

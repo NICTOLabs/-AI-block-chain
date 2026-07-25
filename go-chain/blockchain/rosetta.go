@@ -324,7 +324,7 @@ func parseRosettaAmount(s string) uint64 {
 	parts := strings.Split(s, ".")
 	if len(parts) == 1 {
 		n, _ := strconv.ParseUint(parts[0], 10, 64)
-		return n * 100000000
+		return n * HogohogoPerTender
 	}
 	if len(parts) == 2 {
 		intPart, _ := strconv.ParseUint(parts[0], 10, 64)

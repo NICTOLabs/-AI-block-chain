@@ -6,10 +6,15 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	blockchain "ai_block_chain_go/blockchain"
 )
+
+const peerKeepAlive = 30 * time.Second
+const peerDialTimeout = 3 * time.Second
+const peerWriteTimeout = 2 * time.Second
 
 type NodeInfo struct {
 	Address string   `json:"address"`
@@ -39,6 +44,9 @@ type P2PNode struct {
 	nodeSecret   string
 	mutedPeers   map[string]time.Time
 	peerRateLimits map[string][]time.Time
+	peerConns    map[string]net.Conn
+	peerWriters  map[string]*bufio.Writer
+	peerMu       sync.Mutex
 }
 
 func (p2p *P2PNode) allowPeerRate(remote string) bool {
@@ -57,7 +65,92 @@ func (p2p *P2PNode) allowPeerRate(remote string) bool {
 	return true
 }
 
+func (p2p *P2PNode) ensurePeerConn(target string) (net.Conn, *bufio.Writer, error) {
+	p2p.peerMu.Lock()
+	if c, ok := p2p.peerConns[target]; ok {
+		w := p2p.peerWriters[target]
+		p2p.peerMu.Unlock()
+		return c, w, nil
+	}
+	p2p.peerMu.Unlock()
+
+	conn, err := net.DialTimeout("tcp", target, peerDialTimeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	_ = conn.SetDeadline(time.Time{})
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetKeepAlive(true)
+		_ = tcp.SetKeepAlivePeriod(peerKeepAlive)
+	}
+
+	w := bufio.NewWriter(conn)
+	p2p.peerMu.Lock()
+	p2p.peerConns[target] = conn
+	p2p.peerWriters[target] = w
+	p2p.peerMu.Unlock()
+
+	return conn, w, nil
+}
+
+func (p2p *P2PNode) writePeer(target string, payload []byte) error {
+	_, w, err := p2p.ensurePeerConn(target)
+	if err != nil {
+		p2p.peerMu.Lock()
+		_ = p2p.peerConns[target].Close()
+		delete(p2p.peerConns, target)
+		delete(p2p.peerWriters, target)
+		p2p.peerMu.Unlock()
+		return err
+	}
+	_, writeErr := w.Write(append(payload, '\n'))
+	if writeErr != nil {
+		p2p.peerMu.Lock()
+		_ = p2p.peerConns[target].Close()
+		delete(p2p.peerConns, target)
+		delete(p2p.peerWriters, target)
+		p2p.peerMu.Unlock()
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		p2p.peerMu.Lock()
+		_ = p2p.peerConns[target].Close()
+		delete(p2p.peerConns, target)
+		delete(p2p.peerWriters, target)
+		p2p.peerMu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (p2p *P2PNode) keepAlivePeers() {
+	ticker := time.NewTicker(peerKeepAlive)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-p2p.shutdown:
+			return
+		case <-ticker.C:
+			p2p.peerMu.Lock()
+			for target, c := range p2p.peerConns {
+				if c == nil {
+					continue
+				}
+				ping := p2pMessage{Type: "ping", From: p2p.addr}
+				payload, _ := json.Marshal(ping)
+				w := p2p.peerWriters[target]
+			if w != nil {
+				_, _ = w.Write(append(payload, '\n'))
+				_ = w.Flush()
+			}
+			}
+			p2p.peerMu.Unlock()
+		}
+	}
+}
+
 func (p2p *P2PNode) Start() {
+	go p2p.keepAlivePeers()
 	listener, err := net.Listen("tcp", p2p.addr)
 	if err != nil {
 		blockchain.LogJSON("p2p_listen_failed", p2p.addr, err.Error())
@@ -89,16 +182,14 @@ func (p2p *P2PNode) ConnectToPeers() {
 			break
 		}
 		go func(target string) {
-			conn, err := net.Dial("tcp", target)
+			_, w, err := p2p.ensurePeerConn(target)
 			if err != nil {
 				blockchain.LogJSON("connect_peer", target, err.Error())
 				return
 			}
-			defer conn.Close()
 			p2p.peerScores[target] = 1
 			p2p.trustedPeers[target] = true
-			_ = p2p.WriteMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers}})
-			p2p.handleConn(conn)
+			_ = p2p.WriteMessage(w, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers}})
 		}(peer)
 	}
 }
@@ -172,27 +263,20 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 func (p2p *P2PNode) BroadcastBlock(block *blockchain.Block) {
 	msg := p2pMessage{Type: "block", Block: block}
 	payload, _ := json.Marshal(msg)
-	p2p.peers = append(p2p.peers, p2p.addr)
 	for _, peer := range p2p.peers {
 		if peer == "" || peer == p2p.addr || !p2p.trustedPeers[peer] {
 			continue
 		}
-		conn, err := net.Dial("tcp", peer)
-		if err != nil {
-			blockchain.LogJSON("broadcast", peer, err.Error())
-			continue
-		}
-		_, _ = conn.Write(append(payload, '\n'))
-		conn.Close()
+		_ = p2p.writePeer(peer, payload)
 	}
 }
 
-func (p2p *P2PNode) WriteMessage(conn net.Conn, msg p2pMessage) error {
+func (p2p *P2PNode) WriteMessage(w io.Writer, msg p2pMessage) error {
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	_, err = conn.Write(append(payload, '\n'))
+	_, err = w.Write(append(payload, '\n'))
 	return err
 }
 
@@ -207,6 +291,8 @@ func NewP2PNode(addr string, peers []string, chain *blockchain.Blockchain, stric
 		maxPeers:       50,
 		strictMode:     strictMode,
 		peerRateLimits: make(map[string][]time.Time),
+		peerConns:      make(map[string]net.Conn),
+		peerWriters:    make(map[string]*bufio.Writer),
 	}
 }
 

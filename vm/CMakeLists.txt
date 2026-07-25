@@ -9,6 +9,7 @@ add_library(ai_vm STATIC
     src/vm.cpp
     src/opcodes.cpp
     src/gas.cpp
+    src/handlers.cpp
 )
 
 target_include_directories(ai_vm PUBLIC src)
@@ -19,6 +20,7 @@ add_executable(vm_tests
     src/vm.cpp
     src/opcodes.cpp
     src/gas.cpp
+    src/handlers.cpp
 )
 
 target_include_directories(vm_tests PRIVATE src)

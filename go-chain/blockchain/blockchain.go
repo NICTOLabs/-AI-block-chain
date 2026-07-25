@@ -603,7 +603,12 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 			atomic.AddInt64(&bc.EnsureMetrics().txAccepted, 1)
 		}
 	}
-	block = bc.proofOfWork(block)
+	if bc.Consensus == ProofOfWork {
+		block = bc.proofOfWork(block)
+	} else {
+		block.TxMerkleRoot = CalculateMerkleRoot(block.Transactions)
+		block.BlockHash = calculateHash(block)
+	}
 	if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
 		return nil, err
 	}
@@ -685,6 +690,9 @@ func (bc *Blockchain) proofOfWork(block Block) Block {
 }
 
 func (bc *Blockchain) adjustDifficulty() {
+	if bc.Consensus == ProofOfStake {
+		return
+	}
 	if len(bc.Chain) < 2 {
 		return
 	}
@@ -925,6 +933,13 @@ func (bc *Blockchain) validateBlock(block Block, prev Block) error {
 			return fmt.Errorf("invalid transaction")
 		}
 	}
+	if bc.Consensus == ProofOfStake && block.Author != "" {
+		if _, ok := bc.Validators[block.Author]; !ok && !bc.isAuthority(block.Author) {
+			if _, inLedger := bc.Ledger[block.Author]; !inLedger {
+				return fmt.Errorf("block author is not an active validator")
+			}
+		}
+	}
 	return nil
 }
 
@@ -978,6 +993,15 @@ func (bc *Blockchain) IsMintingPaused() bool {
 		return false
 	}
 	return true
+}
+
+func (bc *Blockchain) isAuthority(address string) bool {
+	for _, a := range bc.Authorities {
+		if a == address {
+			return true
+		}
+	}
+	return false
 }
 
 func (bc *Blockchain) RLock()   { bc.mu.RLock() }

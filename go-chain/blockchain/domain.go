@@ -74,6 +74,7 @@ type ConsensusType int
 const (
 	ProofOfStake ConsensusType = iota
 	ProofOfAuthority
+	ProofOfWork
 )
 
 const (

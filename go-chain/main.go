@@ -2,8 +2,7 @@ package main
 
 import (
 	"bufio"
-	"crypto/ed25519"
-	"crypto/rand"
+
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -22,65 +21,30 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"ai_block_chain_go/blockchain"
 )
 
-type TransactionType string
+type TransactionType = blockchain.TransactionType
 
 const (
-	Transfer       TransactionType = "TRANSFER"
-	RegisterModel  TransactionType = "REGISTER_MODEL"
-	UpdateModel    TransactionType = "UPDATE_MODEL"
-	PurchaseApiKey TransactionType = "PURCHASE_API_KEY"
+	Transfer       TransactionType = blockchain.Transfer
+	RegisterModel  TransactionType = blockchain.RegisterModel
+	UpdateModel    TransactionType = blockchain.UpdateModel
+	PurchaseApiKey TransactionType = blockchain.PurchaseApiKey
 )
 
-type Transaction struct {
-	ID         string          `json:"id,omitempty"`
-	From       string          `json:"from"`
-	FromPubKey string          `json:"from_pubkey"`
-	To         string          `json:"to"`
-	Amount     uint64          `json:"amount"`
-	Fee        uint64          `json:"fee,omitempty"`
-	Nonce      uint64          `json:"nonce,omitempty"`
-	TxType     TransactionType `json:"tx_type"`
-	Payload    string          `json:"payload,omitempty"`
-	Signature  string          `json:"signature,omitempty"`
-	Timestamp  int64           `json:"timestamp"`
-	ChainID    string          `json:"chain_id,omitempty"`
-}
+type Transaction = blockchain.Transaction
+type Block = blockchain.Block
+type Account = blockchain.Account
+type ModelEntry = blockchain.ModelEntry
 
-type Block struct {
-	Index        uint64        `json:"index"`
-	Author       string        `json:"author"`
-	MinerAddress string        `json:"miner_address"`
-	PreviousHash string        `json:"previous_hash"`
-	Timestamp    int64         `json:"timestamp"`
-	Transactions []Transaction `json:"transactions"`
-	Nonce        uint64        `json:"nonce"`
-	BlockHash    string        `json:"block_hash"`
-}
-
-type Account struct {
-	Address string `json:"address"`
-	Balance uint64 `json:"balance"`
-	Staked  uint64 `json:"staked"`
-	IsAgent bool   `json:"is_agent"`
-}
-
-type ModelEntry struct {
-	ID           string `json:"id"`
-	Owner        string `json:"owner"`
-	Version      string `json:"version"`
-	Metadata     string `json:"metadata"`
-	PricePerCall uint64 `json:"price_per_call"`
-	Active       bool   `json:"active"`
-}
-
-type ConsensusType int
+type ConsensusType = blockchain.ConsensusType
 
 const (
-	ProofOfStake ConsensusType = iota
-	ProofOfAuthority
-	ProofOfWork
+	ProofOfStake    ConsensusType = blockchain.ProofOfStake
+	ProofOfAuthority ConsensusType = blockchain.ProofOfAuthority
+	ProofOfWork     ConsensusType = blockchain.ProofOfWork
 )
 
 const (
@@ -90,6 +54,9 @@ const (
 	RewardRatePercent uint64 = 4
 	MinStake          uint64 = 100
 	SlashPercent      uint64 = 10
+	CurrencySubunit   string = "HOGOHOGO"
+	HogohogoPerTender uint64 = 100_000_000
+
 	MaxSupply         uint64 = 18_446_744_073_709_551_615
 	InitialSupply     uint64 = 50_000_000_000
 	BlockRewardBase   uint64 = 100
@@ -103,68 +70,15 @@ const (
 
 var CurrencyName = "TENDER"
 
-type Escrow struct {
-	ID        string `json:"id"`
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Amount    uint64 `json:"amount"`
-	ServiceID string `json:"service_id"`
-	Status    string `json:"status"`
-}
-
-type GovernanceProposal struct {
-	ID          string          `json:"id"`
-	Title       string          `json:"title"`
-	Description string          `json:"description"`
-	Votes       map[string]bool `json:"votes"`
-	Status      string          `json:"status"`
-}
-
-type ServiceAgreement struct {
-	ID           string `json:"id"`
-	Provider     string `json:"provider"`
-	Consumer     string `json:"consumer"`
-	ModelID      string `json:"model_id"`
-	PricePerCall uint64 `json:"price_per_call"`
-	MaxCalls     uint64 `json:"max_calls"`
-	Status       string `json:"status"`
-}
-
-type UsageMeter struct {
-	AgreementID string `json:"agreement_id"`
-	UsageCount  uint64 `json:"usage_count"`
-	TotalCost   uint64 `json:"total_cost"`
-}
-
-type Wallet struct {
-	PublicKey  ed25519.PublicKey
-	PrivateKey ed25519.PrivateKey
-}
-
-type AuditEntry struct {
-	Timestamp int64  `json:"timestamp"`
-	Event     string `json:"event"`
-	Actor     string `json:"actor"`
-	Details   string `json:"details"`
-}
-
-type ManagedWallet struct {
-	ID        string `json:"id"`
-	Address   string `json:"address"`
-	PublicKey string `json:"public_key"`
-	Label     string `json:"label"`
-	IsAgent   bool   `json:"is_agent"`
-}
-
-type Validator struct {
-	Address     string `json:"address"`
-	Stake       uint64 `json:"stake"`
-	Active      bool   `json:"active"`
-	JoinedAt    int64  `json:"joined_at"`
-	Performance uint64 `json:"performance"`
-}
-
-type ValidatorInfo = Validator
+type Escrow = blockchain.Escrow
+type GovernanceProposal = blockchain.GovernanceProposal
+type ServiceAgreement = blockchain.ServiceAgreement
+type UsageMeter = blockchain.UsageMeter
+type Wallet = blockchain.Wallet
+type AuditEntry = blockchain.AuditEntry
+type ManagedWallet = blockchain.ManagedWallet
+type Validator = blockchain.Validator
+type ValidatorInfo = blockchain.Validator
 
 type Blockchain struct {
 	mu           sync.RWMutex
@@ -281,35 +195,6 @@ type p2pMessage struct {
 	Chain []Block      `json:"chain,omitempty"`
 	Tx    *Transaction `json:"tx,omitempty"`
 	Peer  *NodeInfo    `json:"peer,omitempty"`
-}
-
-func NewWallet() *Wallet {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		panic(err)
-	}
-	return &Wallet{PublicKey: pub, PrivateKey: priv}
-}
-
-func (w *Wallet) Address() string {
-	hash := sha256.Sum256(w.PublicKey)
-	return hex.EncodeToString(hash[:])
-}
-
-func (w *Wallet) Sign(tx Transaction) Transaction {
-	tx.FromPubKey = hex.EncodeToString(w.PublicKey)
-	tx.Timestamp = time.Now().Unix()
-	payload := tx.signingPayload()
-	tx.Signature = hex.EncodeToString(ed25519.Sign(w.PrivateKey, payload))
-	return tx
-}
-
-func (tx Transaction) signingPayload() []byte {
-	clone := tx
-	clone.Signature = ""
-	clone.ID = ""
-	data, _ := json.Marshal(clone)
-	return data
 }
 
 func NewBlockchain(consensus ConsensusType, dataDir string, chainID string, genesisPath string) *Blockchain {
@@ -597,7 +482,7 @@ func (bc *Blockchain) AddAccount(address string, balance uint64, isAgent bool) {
 func (bc *Blockchain) CreateManagedWallet(label string, isAgent bool) (ManagedWallet, error) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	wallet := NewWallet()
+	wallet := blockchain.NewWallet()
 	address := wallet.Address()
 	bc.addAccountLocked(address, 1000, isAgent)
 	managed := ManagedWallet{ID: fmt.Sprintf("wallet-%d", time.Now().UnixNano()), Address: address, PublicKey: hex.EncodeToString(wallet.PublicKey), Label: label, IsAgent: isAgent}
@@ -655,9 +540,7 @@ func (bc *Blockchain) estimateFee(tx Transaction, congestion int) uint64 {
 	return baseFee
 }
 
-func (bc *Blockchain) DistributeRewards() {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
+func (bc *Blockchain) distributeRewards() {
 	for _, account := range bc.Ledger {
 		if account.Staked > 0 {
 			reward := account.Staked * RewardRatePercent / 100
@@ -665,6 +548,12 @@ func (bc *Blockchain) DistributeRewards() {
 			bc.TokenSupply += reward
 		}
 	}
+}
+
+func (bc *Blockchain) DistributeRewards() {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	bc.distributeRewards()
 }
 
 func (bc *Blockchain) Burn(amount uint64) {
@@ -923,6 +812,7 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	bc.Chain = append(bc.Chain, block)
 	bc.Pending = []Transaction{}
 	bc.adjustDifficulty()
+	bc.distributeRewards()
 	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d miner=%s reward=%d", block.Index, len(block.Transactions), author, reward))
 	atomic.AddInt64(&bc.ensureMetrics().blocksMined, 1)
 	if err := bc.saveToDisk(); err != nil {
@@ -1046,7 +936,7 @@ func (bc *Blockchain) validateTransaction(tx Transaction) bool {
 	if tx.ChainID != bc.ChainID {
 		return false
 	}
-	if !verifyTransaction(tx) {
+	if !blockchain.VerifyTransaction(tx) {
 		return false
 	}
 	if bc.isReplay(tx) {
@@ -1203,31 +1093,6 @@ func (bc *Blockchain) snapshot() nodeState {
 		UsageMeters: bc.UsageMeters,
 		NextNonce:   bc.NextNonce,
 	}
-}
-
-func verifyTransaction(tx Transaction) bool {
-	if tx.ChainID == "" {
-		return false
-	}
-	pubKey, err := hex.DecodeString(tx.FromPubKey)
-	if err != nil {
-		return false
-	}
-	if len(pubKey) != ed25519.PublicKeySize {
-		return false
-	}
-	addressBytes := sha256.Sum256(pubKey)
-	if tx.From != hex.EncodeToString(addressBytes[:]) {
-		return false
-	}
-	sig, err := hex.DecodeString(tx.Signature)
-	if err != nil {
-		return false
-	}
-	if len(sig) != ed25519.SignatureSize {
-		return false
-	}
-	return ed25519.Verify(ed25519.PublicKey(pubKey), tx.signingPayload(), sig)
 }
 
 func consensusName(consensus ConsensusType) string {
@@ -1560,7 +1425,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": payload.Amount})
 	})
 	mux.HandleFunc("/api/wallet", func(w http.ResponseWriter, r *http.Request) {
-		wallet := NewWallet()
+		wallet := blockchain.NewWallet()
 		address := wallet.Address()
 		chain.AddAccount(address, 1000, false)
 		_ = chain.saveToDisk()

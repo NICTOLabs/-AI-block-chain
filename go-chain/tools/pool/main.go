@@ -22,6 +22,8 @@ type MiningPool struct {
 	lastPayout     time.Time
 	difficulty     uint32
 	latestBlockIdx uint64
+	latestBlockHash string
+	nodeBase       string
 }
 
 func NewMiningPool(address string, minPayout uint64, difficulty uint32) *MiningPool {
@@ -33,6 +35,58 @@ func NewMiningPool(address string, minPayout uint64, difficulty uint32) *MiningP
 		lastPayout:   time.Now(),
 		difficulty:   difficulty,
 	}
+}
+
+func (p *MiningPool) StartSync(nodeBase string) {
+	p.mu.Lock()
+	p.nodeBase = strings.TrimRight(nodeBase, "/")
+	p.mu.Unlock()
+	go p.syncLoop()
+}
+
+func (p *MiningPool) syncLoop() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		_ = p.refreshTemplate()
+	}
+}
+
+func (p *MiningPool) refreshTemplate() error {
+	client := &http.Client{Timeout: 3 * time.Second}
+	p.mu.Lock()
+	if p.nodeBase == "" {
+		p.mu.Unlock()
+		return fmt.Errorf("pool node base not configured")
+	}
+	p.mu.Unlock()
+
+	resp, err := client.Get(p.nodeBase + "/api/chain")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return err
+	}
+	chain, ok := result["chain"].([]any)
+	if !ok || len(chain) == 0 {
+		return fmt.Errorf("empty chain")
+	}
+	last, ok := chain[len(chain)-1].(map[string]any)
+	if !ok {
+		return fmt.Errorf("invalid block format")
+	}
+	height, _ := last["index"].(float64)
+	blockHash, _ := last["block_hash"].(string)
+
+	p.mu.Lock()
+	p.latestBlockIdx = uint64(height)
+	p.latestBlockHash = blockHash
+	p.mu.Unlock()
+	return nil
 }
 
 func (p *MiningPool) RegisterWorker(workerID string) bool {
@@ -149,18 +203,23 @@ func (s *PoolServer) handleWork(w http.ResponseWriter, r *http.Request) {
 	}
 	s.pool.mu.Lock()
 	_, registered := s.pool.workers[workerID]
+	idx := s.pool.latestBlockIdx
+	hash := s.pool.latestBlockHash
+	difficulty := s.pool.difficulty
+	addr := s.pool.address
 	s.pool.mu.Unlock()
 	if !registered {
 		http.Error(w, "worker not registered", http.StatusForbidden)
 		return
 	}
 	work := map[string]any{
-		"difficulty": s.pool.difficulty,
+		"difficulty": difficulty,
 		"worker_id":  workerID,
 		"timestamp":  time.Now().Unix(),
 		"block_template": map[string]any{
-			"previous_hash": fmt.Sprintf("%064x", s.pool.latestBlockIdx),
-			"miner_address": s.pool.address,
+			"previous_hash": hash,
+			"height":        idx,
+			"miner_address": addr,
 			"transactions":  []string{},
 		},
 	}
