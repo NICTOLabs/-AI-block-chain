@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -1164,6 +1165,7 @@ func main() {
 	rateLimit := flag.Int("rate-limit", 0, "Requests per minute per client")
 	chainID := flag.String("chain-id", "tdr-mainnet-1", "Chain ID for replay protection")
 	genesisPath := flag.String("genesis", "", "Path to genesis JSON file for initial state")
+	p2pBackend := flag.String("p2p-backend", "tcp", "P2P backend: tcp or libp2p")
 	flag.Parse()
 
 	envCfg := serverConfigFromEnv()
@@ -1220,6 +1222,19 @@ func main() {
 	go p2p.start()
 	go p2p.connectToPeers()
 	go startAPI(chain, envCfg.APIPort, p2p, envCfg)
+
+	if *p2pBackend == "libp2p" {
+		go func() {
+			cmd := exec.Command("go", "run", "./node/p2p/host.go")
+			cmd.Dir = filepath.Join(envCfg.DataDir, "..", "node")
+			cmd.Env = os.Environ()
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Printf("libp2p host exited: %v", err)
+			}
+		}()
+	}
 
 	log.Printf("{\"event\":\"node_start\",\"currency\":\"%s\",\"api_port\":%d,\"p2p_port\":%d,\"consensus\":\"%s\",\"chain_id\":\"%s\"}", CurrencyName, envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus, *chainID)
 	<-p2p.shutdown

@@ -803,6 +803,66 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 			"human_value_score":     humanScore,
 		})
 	})
+	mux.HandleFunc("/api/p2p/libp2p/ingest", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var msg struct {
+			Type       string `json:"type"`
+			Block      map[string]any `json:"block,omitempty"`
+			Tx         map[string]any `json:"tx,omitempty"`
+			FromNodeID string `json:"from_node_id,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		chain.Lock()
+		switch msg.Type {
+		case "block":
+			if msg.Block != nil {
+				if idxFloat, ok := msg.Block["index"].(float64); ok {
+					idx := uint64(idxFloat)
+					if int(idx) < len(chain.Chain) {
+						b := chain.Chain[idx]
+						if b.BlockHash == "" {
+						b.BlockHash, _ = msg.Block["block_hash"].(string)
+						b.Author, _ = msg.Block["author"].(string)
+						if ts, ok := msg.Block["timestamp"].(float64); ok {
+							b.Timestamp = int64(ts)
+						}
+						b.PreviousHash, _ = msg.Block["previous_hash"].(string)
+							if txs, ok := msg.Block["transactions"].([]any); ok {
+								for _, txAny := range txs {
+									if txMap, ok := txAny.(map[string]any); ok {
+										txBytes, _ := json.Marshal(txMap)
+										var tx blockchain.Transaction
+										if err := json.Unmarshal(txBytes, &tx); err == nil {
+											chain.EnqueueTransaction(tx)
+										}
+									}
+								}
+							}
+							chain.Chain[idx] = b
+							_ = chain.SaveToDisk()
+						}
+					}
+				}
+			}
+		case "tx":
+			if msg.Tx != nil {
+				txBytes, _ := json.Marshal(msg.Tx)
+				var tx blockchain.Transaction
+				if err := json.Unmarshal(txBytes, &tx); err == nil {
+					chain.EnqueueTransaction(tx)
+				}
+			}
+		}
+		chain.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted", "from": msg.FromNodeID})
+	})
 	blockchain.LogJSON("api_listen", "node", fmt.Sprintf("port=%d", port))
 	var handler http.Handler = mux
 	handler = maxBodyMiddleware(cfg.MaxBodyBytes)(handler)
