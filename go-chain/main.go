@@ -1469,6 +1469,79 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(wallet)
 	})
+	mux.HandleFunc("/api/wallets", func(w http.ResponseWriter, r *http.Request) {
+		chain.mu.RLock()
+		type walletView struct {
+			Label   string `json:"label"`
+			Address string `json:"address"`
+			ID      string `json:"id"`
+		}
+		var list []walletView
+		for _, w := range chain.Wallets {
+			list = append(list, walletView{Label: w.Label, Address: w.Address, ID: w.ID})
+		}
+		chain.mu.RUnlock()
+		if list == nil {
+			list = []walletView{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(list)
+	})
+	mux.HandleFunc("/api/transfer-by-name", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			From      string `json:"from"`
+			ToLabel   string `json:"to_label"`
+			Amount    uint64 `json:"amount"`
+			Fee       uint64 `json:"fee"`
+			FromPubKey string `json:"from_pub_key"`
+			Signature string `json:"signature"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if payload.From == "" || payload.ToLabel == "" || payload.Amount == 0 {
+			http.Error(w, "missing from, to_label, or amount", http.StatusBadRequest)
+			return
+		}
+		chain.mu.RLock()
+		var toAddr string
+		for _, w := range chain.Wallets {
+			if w.Label == payload.ToLabel {
+				toAddr = w.Address
+				break
+			}
+		}
+		chain.mu.RUnlock()
+		if toAddr == "" {
+			http.Error(w, "wallet label not found", http.StatusNotFound)
+			return
+		}
+		tx := Transaction{
+			From:       payload.From,
+			FromPubKey: payload.FromPubKey,
+			To:         toAddr,
+			Amount:     payload.Amount,
+			Fee:        payload.Fee,
+			Signature:  payload.Signature,
+			TxType:     Transfer,
+			ChainID:    chain.ChainID,
+			Timestamp:  time.Now().UnixNano(),
+		}
+		chain.EnqueueTransaction(tx)
+		_ = chain.saveToDisk()
+		p2p.broadcastTransaction(tx)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "queued", "to": toAddr, "to_label": payload.ToLabel, "amount": payload.Amount})
+	})
 	mux.HandleFunc("/api/transfer", func(w http.ResponseWriter, r *http.Request) {
 		if err := requireAuth(r, cfg); err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
