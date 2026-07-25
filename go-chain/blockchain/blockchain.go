@@ -1,9 +1,12 @@
 package blockchain
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
+	"net/http"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -55,6 +58,7 @@ type Blockchain struct {
 	AgentTxCount    uint64
 	MintPaused      bool
 	MintPauseUntil  int64
+	FinalityVotes   map[uint64]map[string]struct{}
 	metrics         *serverMetrics
 }
 
@@ -82,6 +86,7 @@ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blo
 		BlockTime:       time.Second * 5,
 		Difficulty:      16,
 		FinalizedBlocks: make(map[uint64]struct{}),
+		FinalityVotes:   make(map[uint64]map[string]struct{}),
 		LastFinalized:   0,
 		AgentTxCount:    0,
 		metrics:         &serverMetrics{},
@@ -626,6 +631,7 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	if err := bc.SaveToDisk(); err != nil {
 		return nil, err
 	}
+	_ = bc.NotifyBridgeRelayer(&block)
 	return &block, nil
 }
 
@@ -1002,6 +1008,86 @@ func (bc *Blockchain) isAuthority(address string) bool {
 		}
 	}
 	return false
+}
+
+func (bc *Blockchain) activeValidatorCount() int {
+	count := len(bc.Authorities)
+	for _, v := range bc.Validators {
+		if v.Active && v.Stake > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+func (bc *Blockchain) finalityThreshold() int {
+	active := bc.activeValidatorCount()
+	if active == 0 {
+		return 0
+	}
+	return int(math.Ceil(float64(active) * 2.0 / 3.0))
+}
+
+func (bc *Blockchain) CollectFinalityVote(blockIndex uint64, voter string) error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	if blockIndex >= uint64(len(bc.Chain)) {
+		return fmt.Errorf("invalid block index")
+	}
+	if _, ok := bc.FinalityVotes[blockIndex]; !ok {
+		bc.FinalityVotes[blockIndex] = make(map[string]struct{})
+	}
+	bc.FinalityVotes[blockIndex][voter] = struct{}{}
+	return nil
+}
+
+func (bc *Blockchain) TryFinalizeBlock(blockIndex uint64) error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	voters, ok := bc.FinalityVotes[blockIndex]
+	if !ok {
+		return fmt.Errorf("no votes collected")
+	}
+	threshold := bc.finalityThreshold()
+	if len(voters) < threshold {
+		return fmt.Errorf("insufficient votes: %d < %d", len(voters), threshold)
+	}
+	bc.LastFinalized = blockIndex
+	bc.FinalizedBlocks[blockIndex] = struct{}{}
+	bc.appendAuditEntry("block_finalized", "system", fmt.Sprintf("index=%d votes=%d threshold=%d", blockIndex, len(voters), threshold))
+	return nil
+}
+
+func (bc *Blockchain) NotifyBridgeRelayer(block *Block) error {
+	if block == nil {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{
+		"tx_hash":      block.BlockHash,
+		"from":         block.Author,
+		"amount":       uint64(0),
+		"recipient":    block.Author,
+		"block_index":  block.Index,
+		"block_hash":   block.BlockHash,
+	})
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:8081/relay/lock", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("bridge relayer returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (bc *Blockchain) RLock()   { bc.mu.RLock() }

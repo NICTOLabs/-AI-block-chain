@@ -294,6 +294,43 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(chain.Snapshot())
 	})
+	mux.HandleFunc("/api/finality", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if r.Method == http.MethodPost {
+			var payload struct {
+				Index  uint64   `json:"index"`
+				Voter  string   `json:"voter"`
+				Voters []string `json:"voters"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if payload.Voter != "" {
+				if err := chain.CollectFinalityVote(payload.Index, payload.Voter); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+			if len(payload.Voters) > 0 {
+				for _, voter := range payload.Voters {
+					_ = chain.CollectFinalityVote(payload.Index, voter)
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "voted"})
+			return
+		}
+		chain.RLock()
+		defer chain.RUnlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"last_finalized": chain.LastFinalized,
+			"finalized":      chain.FinalizedBlocks,
+		})
+	})
 	mux.HandleFunc("/api/audit", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		chain.RLock()
