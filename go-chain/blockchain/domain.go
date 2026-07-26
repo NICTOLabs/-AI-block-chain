@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,6 +59,16 @@ type Account struct {
 	Balance uint64 `json:"balance"`
 	Staked  uint64 `json:"staked"`
 	IsAgent bool   `json:"is_agent"`
+}
+
+type MinerStats struct {
+	Address              string `json:"address"`
+	BlocksSubmitted      uint64 `json:"blocks_submitted"`
+	LastSubmissionTime   int64  `json:"last_submission_time"`
+	SubmittedLastHour    uint64 `json:"submitted_last_hour"`
+	PersonalDifficulty   uint32 `json:"personal_difficulty"`
+	AcceleratorCount     uint64 `json:"accelerator_count"`
+	LastRewardBlock      uint64 `json:"last_reward_block"`
 }
 
 type ModelEntry struct {
@@ -164,6 +175,20 @@ type ManagedWallet struct {
 	IsAgent   bool   `json:"is_agent"`
 }
 
+type UniversalWallet struct {
+	Name     string `json:"name"`
+	Address  string `json:"address"`
+	Label    string `json:"label"`
+	Currency string `json:"currency"`
+}
+
+type FinalityVoteSignature struct {
+	BlockHash string `json:"block_hash"`
+	Voter     string `json:"voter"`
+	Vote      string `json:"vote"`
+	Signature []byte `json:"signature"`
+}
+
 type Validator struct {
 	Address     string `json:"address"`
 	Stake       uint64 `json:"stake"`
@@ -193,6 +218,8 @@ type nodeState struct {
 	AgentTxCount    uint64                         `json:"agent_tx_count"`
 	MintPaused      bool                           `json:"mint_paused"`
 	MintPauseUntil  int64                          `json:"mint_pause_until"`
+	UniversalWallets map[string]UniversalWallet   `json:"universal_wallets"`
+	FinalitySignatures map[uint64][]FinalityVoteSignature `json:"finality_signatures"`
 }
 
 type Snapshot struct {
@@ -253,6 +280,7 @@ func (s *StateStore) loadLatest() error {
 	}
 	var latest string
 	var latestHeight uint64
+	var snapshots []string
 	for _, f := range files {
 		if f.IsDir() {
 			continue
@@ -261,6 +289,7 @@ func (s *StateStore) loadLatest() error {
 		if len(name) < 12 || name[:8] != "snapshot" {
 			continue
 		}
+		snapshots = append(snapshots, name)
 		var h uint64
 		if _, err := fmt.Sscanf(name, "snapshot_%d.json.gz", &h); err != nil {
 			continue
@@ -270,10 +299,27 @@ func (s *StateStore) loadLatest() error {
 			latest = name
 		}
 	}
+	if len(snapshots) > s.maxFiles {
+		s.pruneSnapshotFiles(snapshots)
+	}
 	if latest == "" {
 		_ = os.MkdirAll(filepath.Join(s.dir, "data"), 0o755)
 	}
 	return nil
+}
+
+func (s *StateStore) pruneSnapshotFiles(names []string) {
+	sorted := make([]string, len(names))
+	copy(sorted, names)
+	sort.Strings(sorted)
+	remove := len(sorted) - s.maxFiles
+	if remove <= 0 {
+		return
+	}
+	for _, name := range sorted[:remove] {
+		path := filepath.Join(s.dir, name)
+		_ = os.Remove(path)
+	}
 }
 
 

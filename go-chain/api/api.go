@@ -301,27 +301,37 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		}
 		if r.Method == http.MethodPost {
 			var payload struct {
-				Index  uint64   `json:"index"`
-				Voter  string   `json:"voter"`
-				Voters []string `json:"voters"`
+				Index      uint64   `json:"index"`
+				Voter      string   `json:"voter"`
+				Voters     []string `json:"voters"`
+				Signatures []struct {
+					VoterHex string `json:"voter"`
+					Vote     string `json:"vote"`
+					Signature []byte `json:"signature"`
+				} `json:"signatures"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			if payload.Voter != "" {
-				if err := chain.CollectFinalityVote(payload.Index, payload.Voter); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
+				_ = chain.CollectFinalityVote(payload.Index, payload.Voter)
 			}
 			if len(payload.Voters) > 0 {
 				for _, voter := range payload.Voters {
 					_ = chain.CollectFinalityVote(payload.Index, voter)
 				}
 			}
+			if len(payload.Signatures) > 0 {
+				for _, s := range payload.Signatures {
+					vote := blockchain.FinalityVoteSignature{BlockHash: chain.TailHash(), Voter: s.VoterHex, Vote: s.Vote, Signature: s.Signature}
+					if chain.VerifyFinalitySignature(vote) {
+						chain.FinalitySignatures[payload.Index] = append(chain.FinalitySignatures[payload.Index], vote)
+					}
+				}
+			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "voted"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "voted", "signatures_received": len(payload.Signatures)})
 			return
 		}
 		chain.RLock()
@@ -329,6 +339,7 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"last_finalized": chain.LastFinalized,
 			"finalized":      chain.FinalizedBlocks,
+			"signatures":     chain.FinalitySignatures,
 		})
 	})
 	mux.HandleFunc("/api/audit", func(w http.ResponseWriter, r *http.Request) {
@@ -590,6 +601,76 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		_ = chain.SaveToDisk()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": address, "public_key": hex.EncodeToString(wallet.PublicKey)})
+	})
+	mux.HandleFunc("/api/universal/register", func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.allow(r.RemoteAddr) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Name     string `json:"name"`
+			Address  string `json:"address"`
+			Label    string `json:"label"`
+			Currency string `json:"currency"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		uw, err := chain.RegisterUniversalWallet(payload.Name, payload.Address, payload.Label, payload.Currency)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = chain.SaveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(uw)
+	})
+	mux.HandleFunc("/api/universal/lookup", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		if name == "" {
+			http.Error(w, "missing name", http.StatusBadRequest)
+			return
+		}
+		uw, err := chain.LookupWallet(name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(uw)
+	})
+	mux.HandleFunc("/api/universal/transfer", func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.allow(r.RemoteAddr) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			From     string `json:"from"`
+			ToName   string `json:"to_name"`
+			Amount   uint64 `json:"amount"`
+			Currency string `json:"currency"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		uw, err := chain.UniversalTransfer(payload.From, payload.ToName, payload.Currency, payload.Amount)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = chain.SaveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "transferred", "recipient": uw})
 	})
 	mux.HandleFunc("/api/faucet", func(w http.ResponseWriter, r *http.Request) {
 		if !limiter.allow(r.RemoteAddr) {

@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -1224,16 +1223,7 @@ func main() {
 	go startAPI(chain, envCfg.APIPort, p2p, envCfg)
 
 	if *p2pBackend == "libp2p" {
-		go func() {
-			cmd := exec.Command("go", "run", "./node/p2p/host.go")
-			cmd.Dir = filepath.Join(envCfg.DataDir, "..", "node")
-			cmd.Env = os.Environ()
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				log.Printf("libp2p host exited: %v", err)
-			}
-		}()
+		log.Printf("embedded libp2p host not yet enabled; set up the dedicated p2p service or use --p2p-backend=tcp")
 	}
 
 	log.Printf("{\"event\":\"node_start\",\"currency\":\"%s\",\"api_port\":%d,\"p2p_port\":%d,\"consensus\":\"%s\",\"chain_id\":\"%s\"}", CurrencyName, envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus, *chainID)

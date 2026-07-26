@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
@@ -170,4 +171,13 @@ func (r *relayer) handleHealth(w http.ResponseWriter, req *http.Request) {
 		Status:    "ok",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+func (r *relayer) handleEthereumLock(ctx context.Context, event ethereumLockEvent) {
+	mintResult, err := r.tokenAdapter.Mint(event.To, event.Amount)
+	if err != nil {
+		log.Printf("mint failed for ethereum event tx=%s to=%s amount=%d error=%v", event.TxHash, event.To, event.Amount, err)
+		return
+	}
+	log.Printf("ethereum lock minted tx=%s to=%s amount=%d mint=%+v", event.TxHash, event.To, event.Amount, mintResult)
 }

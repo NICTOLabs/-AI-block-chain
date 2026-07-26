@@ -2,16 +2,18 @@ package blockchain
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
 	"net/http"
-	"crypto/sha256"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -59,6 +61,9 @@ type Blockchain struct {
 	MintPaused      bool
 	MintPauseUntil  int64
 	FinalityVotes   map[uint64]map[string]struct{}
+	FinalitySignatures map[uint64][]FinalityVoteSignature
+	MinerStats      map[string]*MinerStats
+	UniversalWallets map[string]UniversalWallet
 	metrics         *serverMetrics
 }
 
@@ -87,8 +92,11 @@ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blo
 		Difficulty:      16,
 		FinalizedBlocks: make(map[uint64]struct{}),
 		FinalityVotes:   make(map[uint64]map[string]struct{}),
+		FinalitySignatures: make(map[uint64][]FinalityVoteSignature),
 		LastFinalized:   0,
 		AgentTxCount:    0,
+		MinerStats:      make(map[string]*MinerStats),
+		UniversalWallets: make(map[string]UniversalWallet),
 		metrics:         &serverMetrics{},
 	}
 	bc.createGenesisBlock()
@@ -143,6 +151,8 @@ func (bc *Blockchain) SaveToDisk() error {
 		AgentTxCount:    bc.AgentTxCount,
 		MintPaused:      bc.MintPaused,
 		MintPauseUntil:  bc.MintPauseUntil,
+		UniversalWallets: bc.UniversalWallets,
+		FinalitySignatures: bc.FinalitySignatures,
 	}
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -185,6 +195,8 @@ func (bc *Blockchain) LoadFromDisk() error {
 	bc.AgentTxCount = state.AgentTxCount
 	bc.MintPaused = state.MintPaused
 	bc.MintPauseUntil = state.MintPauseUntil
+	bc.UniversalWallets = state.UniversalWallets
+	bc.FinalitySignatures = state.FinalitySignatures
 	for from, nonceMap := range bc.UsedNonces {
 		maxNonce := uint64(0)
 		for nonce := range nonceMap {
@@ -273,6 +285,89 @@ func (bc *Blockchain) CreateManagedWallet(label string, isAgent bool) (ManagedWa
 	bc.Wallets[managed.ID] = managed
 	bc.appendAuditEntry("wallet_created", address, fmt.Sprintf("label=%s agent=%t", label, isAgent))
 	return managed, nil
+}
+
+func (bc *Blockchain) RegisterUniversalWallet(name, address, label, currency string) (UniversalWallet, error) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" || address == "" {
+		return UniversalWallet{}, fmt.Errorf("name and address required")
+	}
+	if len(bc.UniversalWallets) > 1024 {
+		return UniversalWallet{}, fmt.Errorf("directory full")
+	}
+	for _, uw := range bc.UniversalWallets {
+		if uw.Name == name {
+			return UniversalWallet{}, fmt.Errorf("name taken")
+		}
+		if uw.Address == address {
+			return UniversalWallet{}, fmt.Errorf("address registered")
+		}
+	}
+	entry := UniversalWallet{Name: name, Address: address, Label: label, Currency: currency}
+	bc.UniversalWallets[name] = entry
+	bc.appendAuditEntry("universal_wallet_registered", address, fmt.Sprintf("name=%s", name))
+	return entry, nil
+}
+
+func (bc *Blockchain) LookupWallet(name string) (UniversalWallet, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	name = strings.ToLower(strings.TrimSpace(name))
+	uw, ok := bc.UniversalWallets[name]
+	if !ok {
+		return UniversalWallet{}, fmt.Errorf("wallet not found")
+	}
+	return uw, nil
+}
+
+func (bc *Blockchain) UniversalTransfer(fromWallet, toName, currency string, amount uint64) (UniversalWallet, error) {
+	if amount == 0 {
+		return UniversalWallet{}, fmt.Errorf("amount must be positive")
+	}
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	toName = strings.ToLower(strings.TrimSpace(toName))
+	to, ok := bc.UniversalWallets[toName]
+	if !ok {
+		return UniversalWallet{}, fmt.Errorf("recipient wallet not found")
+	}
+	fromAcct := bc.Ledger[fromWallet]
+	if fromAcct == nil || fromAcct.Balance < amount {
+		return UniversalWallet{}, fmt.Errorf("insufficient funds")
+	}
+	fromAcct.Balance -= amount
+	bcfAcct := bc.Ledger[to.Address]
+	if bcfAcct == nil {
+		bcfAcct = &Account{Address: to.Address, Balance: 0, Staked: 0, IsAgent: false}
+		bc.Ledger[to.Address] = bcfAcct
+	}
+	bcfAcct.Balance += amount
+	tx := Transaction{
+		From: fromWallet, To: to.Address, Amount: amount, Fee: 1,
+		ChainID: bc.ChainID,
+		Timestamp: time.Now().Unix(), TxType: Transfer,
+		Nonce: bc.NextNonce[fromWallet],
+	}
+	bc.NextNonce[fromWallet] = tx.Nonce + 1
+	bc.markTransactionSeen(tx)
+	block := Block{
+		Index: uint64(len(bc.Chain)), Author: fromWallet, PreviousHash: bc.TailHash(),
+		Timestamp: time.Now().Unix(), Transactions: []Transaction{tx},
+	}
+	bc.applyBlock(block)
+	bc.Chain = append(bc.Chain, block)
+	bc.Pending = []Transaction{}
+	bc.appendAuditEntry("universal_transfer", fromWallet, fmt.Sprintf("to=%s amount=%d currency=%s", toName, amount, currency))
+	return to, nil
+}
+
+func (bc *Blockchain) TailHash() string {
+	if len(bc.Chain) == 0 {
+		return "0"
+	}
+	return bc.Chain[len(bc.Chain)-1].BlockHash
 }
 
 func (bc *Blockchain) Stake(address string, amount uint64) {
@@ -617,7 +712,7 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
 		return nil, err
 	}
-	blockReward := uint64(100)
+	blockReward := bc.MineRewardFor(author)
 	if account := bc.Ledger[author]; account != nil {
 		account.Balance += blockReward
 		bc.TokenSupply += blockReward
@@ -626,7 +721,9 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	bc.Chain = append(bc.Chain, block)
 	bc.Pending = []Transaction{}
 	bc.adjustDifficulty()
-	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d miner=%s", block.Index, len(block.Transactions), author))
+	bc.RecordMinerSubmission(author)
+	bc.NoteMinedBlock(author)
+	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d miner=%s reward=%d", block.Index, len(block.Transactions), author, blockReward))
 	atomic.AddInt64(&bc.EnsureMetrics().blocksMined, 1)
 	if err := bc.SaveToDisk(); err != nil {
 		return nil, err
@@ -1020,6 +1117,29 @@ func (bc *Blockchain) activeValidatorCount() int {
 	return count
 }
 
+func (bc *Blockchain) SignFinalityVote(blockIndex uint64, voter ed25519.PrivateKey) (FinalityVoteSignature, error) {
+	if int(blockIndex) >= len(bc.Chain) {
+		return FinalityVoteSignature{}, fmt.Errorf("invalid block index")
+	}
+	block := bc.Chain[blockIndex]
+	payload := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", bc.ChainID, blockIndex, block.BlockHash)))
+	sig := ed25519.Sign(voter, payload[:])
+	voterHex := hex.EncodeToString(ed25519.PublicKey(voter)[:])
+	entry := FinalityVoteSignature{BlockHash: block.BlockHash, Voter: voterHex, Vote: "finalize", Signature: sig}
+	bc.FinalitySignatures[blockIndex] = append(bc.FinalitySignatures[blockIndex], entry)
+	bc.appendAuditEntry("finality_vote_signed", voterHex, fmt.Sprintf("block=%d sig_count=%d", blockIndex, len(bc.FinalitySignatures[blockIndex])))
+	return entry, nil
+}
+
+func (bc *Blockchain) VerifyFinalitySignature(vote FinalityVoteSignature) bool {
+	pubBytes, err := hex.DecodeString(vote.Voter)
+	if err != nil || len(pubBytes) != ed25519.PublicKeySize {
+		return false
+	}
+	payload := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s", vote.BlockHash, vote.Vote, vote.Voter)))
+	return ed25519.Verify(ed25519.PublicKey(pubBytes), payload[:], vote.Signature)
+}
+
 func (bc *Blockchain) finalityThreshold() int {
 	active := bc.activeValidatorCount()
 	if active == 0 {
@@ -1056,6 +1176,75 @@ func (bc *Blockchain) TryFinalizeBlock(blockIndex uint64) error {
 	bc.FinalizedBlocks[blockIndex] = struct{}{}
 	bc.appendAuditEntry("block_finalized", "system", fmt.Sprintf("index=%d votes=%d threshold=%d", blockIndex, len(voters), threshold))
 	return nil
+}
+
+const twoWeekSeconds = 1_209_600
+
+func (bc *Blockchain) MineRewardFor(miner string) uint64 {
+	stats, ok := bc.MinerStats[miner]
+	if !ok || stats == nil {
+		stats = &MinerStats{Address: miner}
+		bc.MinerStats[miner] = stats
+	}
+	now := time.Now().Unix()
+	if stats.LastRewardBlock == 0 {
+		stats.LastRewardBlock = uint64(now)
+		stats.LastSubmissionTime = now
+		stats.BlocksSubmitted = 1
+		return 1
+	}
+	elapsed := now - stats.LastSubmissionTime
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	if elapsed < twoWeekSeconds {
+		stats.AcceleratorCount++
+	}
+	if elapsed < twoWeekSeconds {
+		return 0
+	}
+	if stats.BlocksSubmitted > 0 && stats.AcceleratorCount > 0 {
+		stats.AcceleratorCount = 0
+	}
+	stats.LastSubmissionTime = now
+	stats.BlocksSubmitted++
+	stats.LastRewardBlock = uint64(now)
+	return 1
+}
+
+func (bc *Blockchain) RecordMinerSubmission(miner string) {
+	stats, ok := bc.MinerStats[miner]
+	if !ok || stats == nil {
+		stats = &MinerStats{Address: miner}
+		bc.MinerStats[miner] = stats
+	}
+	stats.BlocksSubmitted++
+	stats.LastSubmissionTime = time.Now().Unix()
+	if stats.SubmittedLastHour > uint64(24*7) {
+		stats.PersonalDifficulty = 32
+	} else {
+		stats.SubmittedLastHour++
+	}
+}
+
+func (bc *Blockchain) NoteMinedBlock(miner string) {
+	stats, ok := bc.MinerStats[miner]
+	if !ok || stats == nil {
+		stats = &MinerStats{Address: miner}
+		bc.MinerStats[miner] = stats
+	}
+	stats.SubmittedLastHour = 0
+}
+
+func (bc *Blockchain) minerDifficulty(miner string) uint32 {
+	stats, ok := bc.MinerStats[miner]
+	if !ok || stats == nil {
+		return bc.Difficulty
+	}
+	if stats.PersonalDifficulty > bc.Difficulty {
+		return stats.PersonalDifficulty
+	}
+	return bc.Difficulty
 }
 
 func (bc *Blockchain) NotifyBridgeRelayer(block *Block) error {

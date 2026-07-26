@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
@@ -9,12 +10,19 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 func main() {
 	port := getEnvOrDefault("RELAYER_PORT", "9090")
 	nodeAPIBase := getEnvOrDefault("TENDER_NODE_URL", "http://localhost:8080")
 	nodeAPIKey := getEnvOrDefault("TENDER_API_KEY", "")
+	ethereumRPC := getEnvOrDefault("TENDER_ETHEREUM_RPC_URL", "")
+	ethereumContract := getEnvOrDefault("TENDER_ETHEREUM_LOCK_CONTRACT", "")
+	ethereumTopic := getEnvOrDefault("TENDER_ETHEREUM_LOCK_TOPIC", "")
 
 	privKey, pubKey, err := loadOrGenerateKey("relayer-key.json")
 	if err != nil {
@@ -39,9 +47,32 @@ func main() {
 	mux.HandleFunc("/relay/status", r.handleStatus)
 	mux.HandleFunc("/relayer/health", r.handleHealth)
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if ethereumRPC != "" && ethereumContract != "" && ethereumTopic != "" {
+		listener, err := newEthereumListener(ethereumRPC, r)
+		if err != nil {
+			log.Fatalf("failed to create ethereum listener: %v", err)
+		}
+		listener.contract = common.HexToAddress(ethereumContract)
+		listener.topic = common.HexToHash(ethereumTopic)
+		go func() {
+			_ = listener.start(ctx)
+		}()
+		go func() {
+			<-ctx.Done()
+			listener.stop()
+		}()
+	} else {
+		log.Println("ethereum relay disabled; set TENDER_ETHEREUM_RPC_URL, TENDER_ETHEREUM_LOCK_CONTRACT, TENDER_ETHEREUM_LOCK_TOPIC to enable")
+	}
+
 	log.Printf("bridge relayer listening on :%s", port)
 	log.Printf("relayer public key: %s", r.pubHex)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func loadOrGenerateKey(path string) (ed25519.PrivateKey, ed25519.PublicKey, error) {

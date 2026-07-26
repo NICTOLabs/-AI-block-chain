@@ -45,8 +45,8 @@ func TestMineBlockIncludesSignedTransfer(t *testing.T) {
 	if block.Transactions[0].ID != pendingID {
 		t.Fatalf("mined tx id %s does not match pending tx id %s", block.Transactions[0].ID, pendingID)
 	}
-	if bc.Ledger[from].Balance != 1_000_000_000+100-10 {
-		t.Fatalf("expected sender balance 1000000090, got %d", bc.Ledger[from].Balance)
+	if bc.Ledger[from].Balance != 1_000_000_000+1-10 {
+		t.Fatalf("expected sender balance 999999991, got %d", bc.Ledger[from].Balance)
 	}
 	if bc.Ledger[to].Balance != 10 {
 		t.Fatalf("expected receiver balance 10, got %d", bc.Ledger[to].Balance)
