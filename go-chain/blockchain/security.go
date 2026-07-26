@@ -16,12 +16,14 @@ type SecurityModule struct {
 	tamperDetected      int64
 	validationFailures  int64
 	securityAuditLog    []string
+	sealedMode          bool
 }
 
 func NewSecurityModule() *SecurityModule {
 	s := &SecurityModule{
 		integrityHashes:    make(map[string]string),
 		hardeningLevel:     2,
+		sealedMode:         true,
 	}
 	s.baselineIntegrity()
 	return s
@@ -85,6 +87,12 @@ func (s *SecurityModule) TamperDetected() int64 {
 
 func (s *SecurityModule) ValidationFailures() int64 {
 	return atomic.LoadInt64(&s.validationFailures)
+}
+
+func (s *SecurityModule) IsSealed() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sealedMode
 }
 
 func (s *SecurityModule) recordAudit(event string) {

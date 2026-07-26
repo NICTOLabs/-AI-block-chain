@@ -1122,14 +1122,11 @@ func (bc *Blockchain) SignFinalityVote(blockIndex uint64, voter ed25519.PrivateK
 		return FinalityVoteSignature{}, fmt.Errorf("invalid block index")
 	}
 	block := bc.Chain[blockIndex]
-	payload := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", bc.ChainID, blockIndex, block.BlockHash)))
+	voterHex := hex.EncodeToString(voter.Public().(ed25519.PublicKey))
+	payload := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s", block.BlockHash, "finalize", voterHex)))
 	sig := ed25519.Sign(voter, payload[:])
-	voterHex := hex.EncodeToString(ed25519.PublicKey(voter)[:])
 	entry := FinalityVoteSignature{BlockHash: block.BlockHash, Voter: voterHex, Vote: "finalize", Signature: sig}
 	bc.FinalitySignatures[blockIndex] = append(bc.FinalitySignatures[blockIndex], entry)
-	if val, ok := bc.Validators[voterHex]; ok && val.PublicKey != "" {
-		entry.Voter = val.PublicKey
-	}
 	bc.appendAuditEntry("finality_vote_signed", voterHex, fmt.Sprintf("block=%d sig_count=%d", blockIndex, len(bc.FinalitySignatures[blockIndex])))
 	return entry, nil
 }
