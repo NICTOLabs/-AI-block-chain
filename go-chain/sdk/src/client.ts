@@ -80,7 +80,7 @@ export class TDRClient {
     return response.data;
   }
 
-  async getRegistry(): Promise<Record<string, ModelEntry>> {
+  async getRegistry(): Promise<Record<string, ModelRef>> {
     const response = await this.client.get('/api/registry');
     return response.data;
   }

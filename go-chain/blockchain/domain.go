@@ -71,13 +71,12 @@ type MinerStats struct {
 	LastRewardBlock      uint64 `json:"last_reward_block"`
 }
 
-type ModelEntry struct {
+type ModelRef struct {
 	ID           string `json:"id"`
 	Owner        string `json:"owner"`
-	Version      string `json:"version"`
-	Metadata     string `json:"metadata"`
-	PricePerCall uint64 `json:"price_per_call"`
+	CID          string `json:"cid"`
 	Active       bool   `json:"active"`
+	PricePerCall uint64 `json:"price_per_call"`
 }
 
 type ConsensusType int
@@ -189,6 +188,52 @@ type FinalityVoteSignature struct {
 	Signature []byte `json:"signature"`
 }
 
+type Vote struct {
+	ValidatorAddress string    `json:"validator_address"`
+	PubKey           string    `json:"pub_key"`
+	BlockHash        string    `json:"block_hash"`
+	Height           uint64    `json:"height"`
+	Round            int64     `json:"round"`
+	Type             string    `json:"type"`
+	Timestamp        int64     `json:"timestamp"`
+	Signature        []byte    `json:"signature"`
+}
+
+type Proposal struct {
+	BlockHash    string    `json:"block_hash"`
+	Height       uint64    `json:"height"`
+	Round        int64     `json:"round"`
+	Block        *Block    `json:"block,omitempty"`
+	PolRound     int64     `json:"pol_round"`
+	Timestamp    int64     `json:"timestamp"`
+	Signature    []byte    `json:"signature"`
+}
+
+type RoundState struct {
+	Height        uint64    `json:"height"`
+	Round         int64     `json:"round"`
+	Step          string    `json:"step"`
+	Proposal      *Proposal `json:"proposal,omitempty"`
+	LockedBlock   *Block    `json:"locked_block,omitempty"`
+	Validators    []Validator `json:"validators"`
+	Proposer      string    `json:"proposer"`
+}
+
+type Evidence struct {
+	Type          string    `json:"type"`
+	ValidatorAddr string    `json:"validator_address"`
+	Height        uint64    `json:"height"`
+	Round         int64     `json:"round"`
+	BlockHash     string    `json:"block_hash"`
+	Timestamp     int64     `json:"timestamp"`
+}
+
+type ValidatorSetUpdate struct {
+	Validator   Validator `json:"validator"`
+	Power       int64     `json:"power"`
+	UpdateType  string    `json:"update_type"`
+}
+
 type Validator struct {
 	PublicKey        string `json:"public_key"`
 	Address          string `json:"address"`
@@ -220,7 +265,7 @@ type nodeState struct {
 	Chain           []Block                        `json:"chain"`
 	Pending         []Transaction                  `json:"pending"`
 	Ledger          map[string]*Account            `json:"ledger"`
-	Registry        map[string]ModelEntry          `json:"registry"`
+	Registry        map[string]ModelRef            `json:"registry"`
 	Consensus       string                         `json:"consensus"`
 	Authorities     []string                       `json:"authorities"`
 	TokenSupply     uint64                         `json:"token_supply"`
@@ -252,7 +297,7 @@ type Snapshot struct {
 		ValidatorSet string    `json:"validator_set"`
 	} `json:"header"`
 	Accounts      map[string]*Account   `json:"accounts"`
-	Registry      map[string]ModelEntry `json:"registry"`
+	Registry      map[string]ModelRef `json:"registry"`
 	Escrows       map[string]Escrow     `json:"escrows"`
 	Proposals     map[string]GovernanceProposal `json:"governance_proposals"`
 	Agreements    map[string]ServiceAgreement    `json:"service_agreements"`

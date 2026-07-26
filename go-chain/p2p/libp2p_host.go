@@ -40,6 +40,7 @@ type LibP2PNode struct {
 	listener   net.Listener
 	shutdown   chan struct{}
 	maxPeers   int
+	strictMode bool
 }
 
 type PeerSession struct {
@@ -53,19 +54,20 @@ type PeerSession struct {
 	encNonce  uint64
 }
 
-func NewLibP2PNode(addr string) (*LibP2PNode, error) {
+func NewLibP2PNode(addr string, strictMode bool) (*LibP2PNode, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err
 	}
 	peerID := PeerID(hex.EncodeToString(pub))
 	return &LibP2PNode{
-		addr:     addr,
-		privKey:  priv,
-		pubKey:   pub,
-		peerID:   peerID,
-		peers:    make(map[PeerID]*PeerSession),
-		maxPeers: 50,
+		addr:       addr,
+		privKey:    priv,
+		pubKey:     pub,
+		peerID:     peerID,
+		peers:      make(map[PeerID]*PeerSession),
+		maxPeers:   50,
+		strictMode: strictMode,
 	}, nil
 }
 
@@ -291,7 +293,7 @@ func (n *LibP2PNode) TrustedPeers() map[string]bool {
 }
 
 func (n *LibP2PNode) StrictMode() bool {
-	return true
+	return n.strictMode
 }
 
 func (n *LibP2PNode) Shutdown() chan struct{} {

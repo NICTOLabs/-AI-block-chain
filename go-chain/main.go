@@ -38,7 +38,7 @@ const (
 type Transaction = blockchain.Transaction
 type Block = blockchain.Block
 type Account = blockchain.Account
-type ModelEntry = blockchain.ModelEntry
+type ModelRef = blockchain.ModelRef
 
 type ConsensusType = blockchain.ConsensusType
 
@@ -86,7 +86,7 @@ type Blockchain struct {
 	Chain        []Block
 	Pending      []Transaction
 	Ledger       map[string]*Account
-	Registry     map[string]ModelEntry
+	Registry     map[string]ModelRef
 	Consensus    ConsensusType
 	Authorities  []string
 	validatorIdx int
@@ -192,15 +192,16 @@ type serverMetrics struct {
 }
 
 type NodeInfo struct {
-	Address string   `json:"address"`
-	Peers   []string `json:"peers"`
+	Address        string   `json:"address"`
+	Peers          []string `json:"peers"`
+	ValidatorPubKey string  `json:"validator_pubkey,omitempty"`
 }
 
 type nodeState struct {
 	Chain       []Block                        `json:"chain"`
 	Pending     []Transaction                  `json:"pending"`
 	Ledger      map[string]*Account            `json:"ledger"`
-	Registry    map[string]ModelEntry          `json:"registry"`
+	Registry    map[string]ModelRef          `json:"registry"`
 	Consensus   string                         `json:"consensus"`
 	Authorities []string                       `json:"authorities"`
 	TokenSupply uint64                         `json:"token_supply"`
@@ -230,7 +231,7 @@ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string, gene
 		Chain:       []Block{},
 		Pending:     []Transaction{},
 		Ledger:      make(map[string]*Account),
-		Registry:    make(map[string]ModelEntry),
+		Registry:    make(map[string]ModelRef),
 		Consensus:   consensus,
 		Authorities: []string{},
 		DataDir:     dataDir,
@@ -863,6 +864,29 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	return &block, nil
 }
 
+func (bc *Blockchain) selectValidatorPubKey() string {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	var candidates []string
+	for address, validator := range bc.Validators {
+		if validator.Active && validator.Stake > 0 {
+			candidates = append(candidates, address)
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		left := bc.Validators[candidates[i]]
+		right := bc.Validators[candidates[j]]
+		if left.Stake == right.Stake {
+			return candidates[i] < candidates[j]
+		}
+		return left.Stake > right.Stake
+	})
+	return bc.Validators[candidates[0]].PublicKey
+}
+
 func (bc *Blockchain) selectValidator() string {
 	if bc.Consensus == ProofOfAuthority {
 		if len(bc.Authorities) == 0 {
@@ -905,6 +929,17 @@ func (bc *Blockchain) selectValidator() string {
 	})
 	bc.validatorIdx = (bc.validatorIdx + 1) % len(candidates)
 	return candidates[bc.validatorIdx]
+}
+
+func (bc *Blockchain) isActiveValidatorPubKey(pubKey string) bool {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	for _, v := range bc.Validators {
+		if v.Active && v.Stake > 0 && v.PublicKey == pubKey {
+			return true
+		}
+	}
+	return false
 }
 
 func (bc *Blockchain) proofOfWork(block Block) Block {
@@ -1062,18 +1097,18 @@ func (bc *Blockchain) applyBlock(block Block) {
 				receiver.Balance += tx.Amount
 			}
 		case RegisterModel:
-			bc.Registry[tx.To] = ModelEntry{
+			cid := fmt.Sprintf("%s:%s:%s", tx.To, tx.From, tx.Payload)
+			bc.Registry[tx.To] = ModelRef{
 				ID:           tx.To,
 				Owner:        tx.From,
-				Version:      tx.Payload,
-				Metadata:     tx.Payload,
-				PricePerCall: tx.Amount,
+				CID:          cid,
 				Active:       true,
+				PricePerCall: tx.Amount,
 			}
 		case UpdateModel:
 			entry := bc.Registry[tx.To]
-			entry.Version = tx.Payload
-			entry.Metadata = tx.Payload
+			cid := fmt.Sprintf("%s:%s:%s", tx.To, tx.From, tx.Payload)
+			entry.CID = cid
 			entry.PricePerCall = tx.Amount
 			bc.Registry[tx.To] = entry
 		case PurchaseApiKey:
@@ -1268,7 +1303,7 @@ func main() {
 
 	var host p2pHost = p2p
 	if *p2pBackend == "libp2p" {
-		embedded, err := p2ppackage.NewLibP2PNode(p2p.addr)
+		embedded, err := p2ppackage.NewLibP2PNode(p2p.addr, envCfg.StrictP2P)
 		if err == nil {
 			_ = embedded.Start()
 			host = embedded
@@ -1858,7 +1893,11 @@ func (p2p *P2PNode) connectToPeers() {
 		}
 		go func(target string) {
 			p2p.announceMDNS()
-			_ = p2p.writePeer(target, mustMarshal(p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers}}))
+			var pubKey string
+			if p2p.chain != nil {
+				pubKey = p2p.chain.selectValidatorPubKey()
+			}
+			_ = p2p.writePeer(target, mustMarshal(p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers, ValidatorPubKey: pubKey}}))
 		}(peer)
 	}
 }
@@ -2087,6 +2126,11 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 				continue
 			}
 			if msg.Peer.Address != "" && msg.Peer.Address != p2p.addr {
+				if p2p.strictMode && msg.Peer.ValidatorPubKey != "" {
+					if !p2p.chain.isActiveValidatorPubKey(msg.Peer.ValidatorPubKey) {
+						continue
+					}
+				}
 				p2p.peers = append(p2p.peers, msg.Peer.Address)
 				p2p.peerScores[msg.Peer.Address] = 1
 				p2p.trustedPeers[msg.Peer.Address] = true

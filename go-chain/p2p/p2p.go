@@ -17,9 +17,9 @@ const peerDialTimeout = 3 * time.Second
 const peerWriteTimeout = 2 * time.Second
 
 type NodeInfo struct {
-	Address string   `json:"address"`
-	Peers   []string `json:"peers"`
-	PubKey  string   `json:"pub_key,omitempty"`
+	Address         string   `json:"address"`
+	Peers           []string `json:"peers"`
+	ValidatorPubKey string   `json:"validator_pubkey,omitempty"`
 }
 
 type Message struct {
@@ -280,7 +280,11 @@ func (p2p *P2PNode) ConnectToPeers() {
 			}
 			p2p.peerScores[target] = 1
 			p2p.trustedPeers[target] = true
-			_ = p2p.WriteMessage(w, Message{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers}})
+			var pubKey string
+			if p2p.chain != nil {
+				pubKey = p2p.chain.SelectValidatorPubKey()
+			}
+			_ = p2p.WriteMessage(w, Message{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers, ValidatorPubKey: pubKey}})
 		}(peer)
 	}
 }
@@ -400,6 +404,11 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 				continue
 			}
 			if msg.Peer.Address != "" && msg.Peer.Address != p2p.addr {
+				if p2p.strictMode && msg.Peer.ValidatorPubKey != "" {
+					if !p2p.chain.IsActiveValidatorPubKey(msg.Peer.ValidatorPubKey) {
+						continue
+					}
+				}
 				p2p.peers = append(p2p.peers, msg.Peer.Address)
 				p2p.peerScores[msg.Peer.Address] = 1
 				p2p.trustedPeers[msg.Peer.Address] = true

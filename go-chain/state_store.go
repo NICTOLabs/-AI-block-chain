@@ -25,7 +25,7 @@ type Snapshot struct {
 		ValidatorSet string    `json:"validator_set"`
 	} `json:"header"`
 	Accounts      map[string]*Account   `json:"accounts"`
-	Registry      map[string]ModelEntry `json:"registry"`
+	Registry      map[string]ModelRef `json:"registry"`
 	Escrows       map[string]Escrow     `json:"escrows"`
 	Proposals     map[string]GovernanceProposal `json:"governance_proposals"`
 	Agreements    map[string]ServiceAgreement    `json:"service_agreements"`
@@ -93,7 +93,7 @@ func (s *StateStore) loadLatest() error {
 		_ = os.MkdirAll(filepath.Join(s.dir, "data"), 0o755)
 		s.latest = &Snapshot{
 			Accounts:   make(map[string]*Account),
-			Registry:   make(map[string]ModelEntry),
+		Registry:   make(map[string]ModelRef),
 			Escrows:    make(map[string]Escrow),
 			Proposals:  make(map[string]GovernanceProposal),
 			Agreements: make(map[string]ServiceAgreement),
@@ -161,7 +161,7 @@ func (s *StateStore) Snapshot() *Snapshot {
 	defer s.mu.RUnlock()
 	clone := &Snapshot{
 		Accounts:   make(map[string]*Account),
-		Registry:   make(map[string]ModelEntry),
+		Registry:   make(map[string]ModelRef),
 		Escrows:    make(map[string]Escrow),
 		Proposals:  make(map[string]GovernanceProposal),
 		Agreements: make(map[string]ServiceAgreement),

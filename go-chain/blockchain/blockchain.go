@@ -35,7 +35,7 @@ type Blockchain struct {
 	Chain           []Block
 	Pending         []Transaction
 	Ledger          map[string]*Account
-	Registry        map[string]ModelEntry
+	Registry        map[string]ModelRef
 	Consensus       ConsensusType
 	Authorities     []string
 	validatorIdx    int
@@ -64,6 +64,7 @@ type Blockchain struct {
 	FinalitySignatures map[uint64][]FinalityVoteSignature
 	MinerStats      map[string]*MinerStats
 	UniversalWallets map[string]UniversalWallet
+	tendermintEngine *TendermintEngine
 	metrics         *serverMetrics
 }
 
@@ -72,7 +73,7 @@ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blo
 		Chain:           []Block{},
 		Pending:         []Transaction{},
 		Ledger:          make(map[string]*Account),
-		Registry:        make(map[string]ModelEntry),
+		Registry:        make(map[string]ModelRef),
 		Consensus:       consensus,
 		Authorities:     []string{},
 		DataDir:         dataDir,
@@ -97,6 +98,7 @@ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blo
 		AgentTxCount:    0,
 		MinerStats:      make(map[string]*MinerStats),
 		UniversalWallets: make(map[string]UniversalWallet),
+		tendermintEngine: NewTendermintEngine([]string{}),
 		metrics:         &serverMetrics{},
 	}
 	bc.createGenesisBlock()
@@ -462,15 +464,15 @@ func (bc *Blockchain) Burn(amount uint64) {
 func (bc *Blockchain) RegisterModel(owner, id, version, metadata string, pricePerCall uint64, active bool) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	bc.Registry[id] = ModelEntry{
+	cid := fmt.Sprintf("%s:%s:%s", id, owner, version)
+	bc.Registry[id] = ModelRef{
 		ID:           id,
 		Owner:        owner,
-		Version:      version,
-		Metadata:     metadata,
-		PricePerCall: pricePerCall,
+		CID:          cid,
 		Active:       active,
+		PricePerCall: pricePerCall,
 	}
-	bc.appendAuditEntry("model_registered", owner, fmt.Sprintf("model_id=%s price=%d", id, pricePerCall))
+	bc.appendAuditEntry("model_registered", owner, fmt.Sprintf("model_id=%s cid=%s price=%d", id, cid, pricePerCall))
 	bc.AgentTxCount++
 }
 
@@ -478,11 +480,11 @@ func (bc *Blockchain) UpdateModel(owner, id, version, metadata string, pricePerC
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	entry := bc.Registry[id]
-	entry.Version = version
-	entry.Metadata = metadata
+	cid := fmt.Sprintf("%s:%s:%s", id, owner, version)
+	entry.CID = cid
 	entry.PricePerCall = pricePerCall
 	bc.Registry[id] = entry
-	bc.appendAuditEntry("model_updated", owner, fmt.Sprintf("model_id=%s price=%d", id, pricePerCall))
+	bc.appendAuditEntry("model_updated", owner, fmt.Sprintf("model_id=%s cid=%s price=%d", id, cid, pricePerCall))
 	bc.AgentTxCount++
 }
 
@@ -557,6 +559,13 @@ func (bc *Blockchain) RegisterValidator(address string, stake uint64, pubKey str
 	account.Staked += stake
 	bc.Validators[address] = Validator{Address: address, Stake: stake, Active: true, JoinedAt: time.Now().Unix(), Performance: 100, PublicKey: pubKey, PublicKeyVersion: 0, KeyRotatedAt: time.Now().Unix(), NextRotationAt: time.Now().Unix() + 30*24*60*60}
 	bc.appendAuditEntry("validator_registered", address, fmt.Sprintf("stake=%d", stake))
+	if bc.tendermintEngine != nil {
+		vals := make([]string, 0, len(bc.Validators))
+		for addr := range bc.Validators {
+			vals = append(vals, addr)
+		}
+		bc.tendermintEngine.UpdateValidatorSet(vals)
+	}
 	return nil
 }
 
@@ -724,9 +733,16 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	bc.applyBlock(block)
 	bc.Chain = append(bc.Chain, block)
 	bc.rotateValidatorKeysLocked(time.Now().Unix())
-	if bc.Consensus != ProofOfWork {
-		bc.collectFinalityVotesLocked(block.Index)
-		_ = bc.tryFinalizeBlockLocked(block.Index)
+	if bc.Consensus != ProofOfWork && bc.tendermintEngine != nil {
+		proposal, _ := bc.tendermintEngine.ProcessProposal(block, author)
+		_ = proposal
+		_, _ = bc.tendermintEngine.Prevote(block.BlockHash)
+		vote, _ := bc.tendermintEngine.Precommit(block.BlockHash)
+		if vote.BlockHash != "" {
+			_ = bc.tendermintEngine.Commit(vote.BlockHash)
+			_ = bc.tendermintEngine.FinalizeBlock(block)
+		}
+		bc.tendermintEngine.AdvanceHeight()
 	}
 	bc.Pending = []Transaction{}
 	bc.adjustDifficulty()
@@ -741,6 +757,29 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	return &block, nil
 }
 
+func (bc *Blockchain) SelectValidatorPubKey() string {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	var candidates []string
+	for address, validator := range bc.Validators {
+		if validator.Active && validator.Stake > 0 {
+			candidates = append(candidates, address)
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		left := bc.Validators[candidates[i]]
+		right := bc.Validators[candidates[j]]
+		if left.Stake == right.Stake {
+			return candidates[i] < candidates[j]
+		}
+		return left.Stake > right.Stake
+	})
+	return bc.Validators[candidates[0]].PublicKey
+}
+
 func (bc *Blockchain) SelectValidator() string {
 	if bc.Consensus == ProofOfAuthority {
 		if len(bc.Authorities) == 0 {
@@ -748,6 +787,9 @@ func (bc *Blockchain) SelectValidator() string {
 		}
 		bc.validatorIdx = (bc.validatorIdx + 1) % len(bc.Authorities)
 		return bc.Authorities[bc.validatorIdx]
+	}
+	if bc.tendermintEngine != nil && bc.Consensus == ProofOfStake {
+		return bc.tendermintEngine.Proposer()
 	}
 	var candidates []string
 	for address, validator := range bc.Validators {
@@ -933,19 +975,19 @@ func (bc *Blockchain) applyBlock(block Block) {
 				receiver.Balance += tx.Amount
 			}
 		case RegisterModel:
-			bc.Registry[tx.To] = ModelEntry{
+			cid := fmt.Sprintf("%s:%s:%s", tx.To, tx.From, tx.Payload)
+			bc.Registry[tx.To] = ModelRef{
 				ID:           tx.To,
 				Owner:        tx.From,
-				Version:      tx.Payload,
-				Metadata:     tx.Payload,
-				PricePerCall: tx.Amount,
+				CID:          cid,
 				Active:       true,
+				PricePerCall: tx.Amount,
 			}
 			bc.AgentTxCount++
 		case UpdateModel:
 			entry := bc.Registry[tx.To]
-			entry.Version = tx.Payload
-			entry.Metadata = tx.Payload
+			cid := fmt.Sprintf("%s:%s:%s", tx.To, tx.From, tx.Payload)
+			entry.CID = cid
 			entry.PricePerCall = tx.Amount
 			bc.Registry[tx.To] = entry
 			bc.AgentTxCount++
@@ -1235,6 +1277,17 @@ func (bc *Blockchain) collectFinalityVotesLocked(blockIndex uint64) {
 }
 
 const twoWeekSeconds = 1_209_600
+
+func (bc *Blockchain) IsActiveValidatorPubKey(pubKey string) bool {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	for _, v := range bc.Validators {
+		if v.Active && v.Stake > 0 && v.PublicKey == pubKey {
+			return true
+		}
+	}
+	return false
+}
 
 func (bc *Blockchain) RotateValidatorKeys(now int64) {
 	bc.mu.Lock()

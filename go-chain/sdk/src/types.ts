@@ -31,13 +31,12 @@ export interface Account {
   is_agent: boolean;
 }
 
-export interface ModelEntry {
+export interface ModelRef {
   id: string;
   owner: string;
-  version: string;
-  metadata: string;
-  price_per_call: number;
+  cid: string;
   active: boolean;
+  price_per_call: number;
 }
 
 export interface Escrow {
@@ -93,7 +92,7 @@ export interface NodeState {
   chain: Block[];
   pending: Transaction[];
   ledger: Record<string, Account>;
-  registry: Record<string, ModelEntry>;
+  registry: Record<string, ModelRef>;
   consensus: string;
   authorities: string[];
   token_supply: number;
