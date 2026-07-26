@@ -542,7 +542,7 @@ func (bc *Blockchain) AddAuthority(address string) {
 	bc.Authorities = append(bc.Authorities, address)
 }
 
-func (bc *Blockchain) RegisterValidator(address string, stake uint64) error {
+func (bc *Blockchain) RegisterValidator(address string, stake uint64, pubKey string) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	account := bc.Ledger[address]
@@ -551,7 +551,7 @@ func (bc *Blockchain) RegisterValidator(address string, stake uint64) error {
 	}
 	account.Balance -= stake
 	account.Staked += stake
-	bc.Validators[address] = Validator{Address: address, Stake: stake, Active: true, JoinedAt: time.Now().Unix(), Performance: 100}
+	bc.Validators[address] = Validator{Address: address, Stake: stake, Active: true, JoinedAt: time.Now().Unix(), Performance: 100, PublicKey: pubKey}
 	bc.appendAuditEntry("validator_registered", address, fmt.Sprintf("stake=%d", stake))
 	return nil
 }
@@ -1127,12 +1127,18 @@ func (bc *Blockchain) SignFinalityVote(blockIndex uint64, voter ed25519.PrivateK
 	voterHex := hex.EncodeToString(ed25519.PublicKey(voter)[:])
 	entry := FinalityVoteSignature{BlockHash: block.BlockHash, Voter: voterHex, Vote: "finalize", Signature: sig}
 	bc.FinalitySignatures[blockIndex] = append(bc.FinalitySignatures[blockIndex], entry)
+	if val, ok := bc.Validators[voterHex]; ok && val.PublicKey != "" {
+		entry.Voter = val.PublicKey
+	}
 	bc.appendAuditEntry("finality_vote_signed", voterHex, fmt.Sprintf("block=%d sig_count=%d", blockIndex, len(bc.FinalitySignatures[blockIndex])))
 	return entry, nil
 }
 
 func (bc *Blockchain) VerifyFinalitySignature(vote FinalityVoteSignature) bool {
 	pubBytes, err := hex.DecodeString(vote.Voter)
+	if err != nil && len(vote.Voter) > 0 {
+		pubBytes, err = hex.DecodeString(vote.Voter)
+	}
 	if err != nil || len(pubBytes) != ed25519.PublicKeySize {
 		return false
 	}
@@ -1359,6 +1365,7 @@ func (bc *Blockchain) LoadGenesis(path string) error {
 			Active:      true,
 			JoinedAt:    time.Now().Unix(),
 			Performance: 100,
+			PublicKey:   val.PublicKey,
 		}
 		bc.AddAuthority(val.Address)
 	}

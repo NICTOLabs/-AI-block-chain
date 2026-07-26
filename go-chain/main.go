@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"ai_block_chain_go/blockchain"
+	p2ppackage "ai_block_chain_go/p2p"
 )
 
 type TransactionType = blockchain.TransactionType
@@ -123,6 +124,25 @@ type P2PNode struct {
 	nodeSecret   string
 	mutedPeers   map[string]time.Time
 }
+
+type p2pHost interface {
+	Start() error
+	Shutdown() chan struct{}
+	Addr() string
+	Peers() []string
+	TrustedPeers() map[string]bool
+	StrictMode() bool
+	BroadcastTransaction(tx Transaction)
+	BroadcastBlock(block *Block)
+}
+
+var _ p2pHost = (*P2PNode)(nil)
+
+func (p2p *P2PNode) Addr() string              { return p2p.addr }
+func (p2p *P2PNode) Peers() []string           { return p2p.peers }
+func (p2p *P2PNode) TrustedPeers() map[string]bool { return p2p.trustedPeers }
+func (p2p *P2PNode) StrictMode() bool           { return p2p.strictMode }
+func (p2p *P2PNode) Shutdown() chan struct{}    { return p2p.shutdown }
 
 type serverConfig struct {
 	APIKey      string
@@ -1220,16 +1240,22 @@ func main() {
 		}
 	}
 
-	go p2p.start()
+	var host p2pHost = p2p
+	if *p2pBackend == "libp2p" {
+		embedded, err := p2ppackage.NewLibP2PNode(p2p.addr)
+		if err == nil {
+			_ = embedded.Start()
+			host = embedded
+			log.Printf("embedded libp2p host started peer=%s", embedded.PeerID())
+		}
+	}
+
+	go p2p.Start()
 	go p2p.connectToPeers()
 	go startAPI(chain, envCfg.APIPort, p2p, envCfg)
 
-	if *p2pBackend == "libp2p" {
-		log.Printf("embedded libp2p host not yet enabled; set up the dedicated p2p service or use --p2p-backend=tcp")
-	}
-
 	log.Printf("{\"event\":\"node_start\",\"currency\":\"%s\",\"api_port\":%d,\"p2p_port\":%d,\"consensus\":\"%s\",\"chain_id\":\"%s\"}", CurrencyName, envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus, *chainID)
-	<-p2p.shutdown
+	<-host.Shutdown()
 }
 
 func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
@@ -1554,7 +1580,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		}
 		chain.EnqueueTransaction(payload)
 		_ = chain.saveToDiskSafe()
-		p2p.broadcastTransaction(payload)
+		p2p.BroadcastTransaction(payload)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(payload)
 	})
@@ -1762,27 +1788,38 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 	}
 }
 
-func (p2p *P2PNode) start() {
+func (p2p *P2PNode) Start() error {
 	listener, err := net.Listen("tcp", p2p.addr)
 	if err != nil {
 		log.Printf("p2p listen: %v", err)
-		return
+		return err
 	}
 	p2p.listener = listener
-	defer listener.Close()
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			select {
-			case <-p2p.shutdown:
-				return
-			default:
-				log.Printf("{\"event\":\"accept_error\",\"error\":\"%v\"}", err)
+	go func() {
+		defer listener.Close()
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				select {
+				case <-p2p.shutdown:
+					return
+				default:
+					log.Printf("{\"event\":\"accept_error\",\"error\":\"%v\"}", err)
+				}
+				continue
 			}
-			continue
+			go p2p.handleConn(conn)
 		}
-		go p2p.handleConn(conn)
-	}
+	}()
+	return nil
+}
+
+func (p2p *P2PNode) BroadcastTransaction(tx Transaction) {
+	p2p.broadcastTransaction(tx)
+}
+
+func (p2p *P2PNode) BroadcastBlock(block *Block) {
+	p2p.broadcastBlock(block)
 }
 
 func (p2p *P2PNode) connectToPeers() {

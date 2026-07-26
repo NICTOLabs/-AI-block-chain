@@ -454,14 +454,15 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 			return
 		}
 		var payload struct {
-			Address string `json:"address"`
-			Stake   uint64 `json:"stake"`
+			Address  string `json:"address"`
+			Stake    uint64 `json:"stake"`
+			PublicKey string `json:"public_key"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := chain.RegisterValidator(payload.Address, payload.Stake); err != nil {
+		if err := chain.RegisterValidator(payload.Address, payload.Stake, payload.PublicKey); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
