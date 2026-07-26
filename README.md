@@ -1,4 +1,4 @@
-# -AI-block-chain
+# TENDER
 
 A production-oriented blockchain and token platform built from scratch for both AI agents and humans, powered by the TENDER currency.
 
