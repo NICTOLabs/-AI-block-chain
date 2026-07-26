@@ -16,6 +16,9 @@ import (
 	"time"
 
 	blockchain "ai_block_chain_go/blockchain"
+
+	"github.com/huin/goupnp"
+	"github.com/jackpal/go-nat-pmp"
 )
 
 const noiseProto = "/noise/1.0.0"
@@ -89,6 +92,10 @@ func (n *LibP2PNode) Start() error {
 	go n.startMDNS()
 	n.wg.Add(1)
 	go n.startNATHolePunch()
+	n.wg.Add(1)
+	go n.startUPnP()
+	n.wg.Add(1)
+	go n.startNATPMP()
 	return nil
 }
 
@@ -122,21 +129,19 @@ func (n *LibP2PNode) handleIncoming(conn net.Conn) {
 	defer n.wg.Done()
 	conn.SetDeadline(time.Now().Add(5 * time.Second))
 
-	if !n.noiseHandshakeInbound(conn) {
+	remotePub, ok := n.noiseHandshakeInbound(conn)
+	if !ok {
 		log.Printf("libp2p noise handshake failed")
 		return
 	}
-	remotePeerID, ok := n.readVarintString(conn)
-	if !ok {
-		return
-	}
+	remotePeerID := fmt.Sprintf("libp2p:%x", sha256.Sum256(remotePub))
 	n.mu.Lock()
-	if _, seen := n.peers[string(remotePeerID)]; seen {
+	if _, seen := n.peers[remotePeerID]; seen {
 		n.mu.Unlock()
 		return
 	}
-	if n.strictMode && !strings.HasPrefix(string(remotePeerID), "validator:") {
-		_, required := n.validatorSet[strings.TrimPrefix(string(remotePeerID), "validator:")]
+	if n.strictMode {
+		_, required := n.validatorSet[remotePeerID]
 		n.mu.Unlock()
 		if !required {
 			log.Printf("libp2p rejecting non-validator peer=%s", remotePeerID)
@@ -145,19 +150,19 @@ func (n *LibP2PNode) handleIncoming(conn net.Conn) {
 		n.mu.Lock()
 	}
 	session := &peerSession{
-		remotePeerID: string(remotePeerID),
+		remotePeerID: remotePeerID,
 		conn:         conn,
 		reader:       bufio.NewReader(conn),
 		lastSeen:     time.Now(),
 		trusted:      true,
 		muxers:       make(map[string]bool),
 	}
-	n.peers[string(remotePeerID)] = session
+	n.peers[remotePeerID] = session
 	n.mu.Unlock()
 	_ = n.sendValidatorAuth(session.conn, LibP2PMessage{
 		Type:   "hello",
 		From:   n.peerID,
-		To:     string(remotePeerID),
+		To:     remotePeerID,
 		PubKey: fmt.Sprintf("%x", n.pubKey),
 	})
 	n.readLoop(session)
@@ -187,19 +192,15 @@ func (n *LibP2PNode) Connect(addr string, remotePub ed25519.PublicKey) error {
 	if err != nil {
 		return err
 	}
-	if !n.noiseHandshakeOutbound(conn) {
+	if !n.noiseHandshakeOutbound(conn, remotePub) {
 		conn.Close()
 		return fmt.Errorf("noise handshake failed")
 	}
-	peerID := fmt.Sprintf("libp2p:%x", sha256.Sum256(remotePub))
-	if err := n.writeVarintString(conn, []byte(peerID)); err != nil {
-		conn.Close()
-		return err
-	}
+	remotePeerID := fmt.Sprintf("libp2p:%x", sha256.Sum256(remotePub))
 	hello := LibP2PMessage{
 		Type:   "hello",
 		From:   n.peerID,
-		To:     peerID,
+		To:     remotePeerID,
 		PubKey: fmt.Sprintf("%x", n.pubKey),
 	}
 	if err := n.sendValidatorAuth(conn, hello); err != nil {
@@ -207,9 +208,9 @@ func (n *LibP2PNode) Connect(addr string, remotePub ed25519.PublicKey) error {
 		return err
 	}
 	n.mu.Lock()
-	if _, seen := n.peers[peerID]; !seen {
-		n.peers[peerID] = &peerSession{
-			remotePeerID: peerID,
+	if _, seen := n.peers[remotePeerID]; !seen {
+		n.peers[remotePeerID] = &peerSession{
+			remotePeerID: remotePeerID,
 			conn:         conn,
 			reader:       bufio.NewReader(conn),
 			lastSeen:     time.Now(),
@@ -220,7 +221,7 @@ func (n *LibP2PNode) Connect(addr string, remotePub ed25519.PublicKey) error {
 	n.mu.Unlock()
 	go func(s *peerSession) {
 		n.readLoop(s)
-	}(n.peers[peerID])
+	}(n.peers[remotePeerID])
 	return nil
 }
 
@@ -299,40 +300,59 @@ func (n *LibP2PNode) sendValidatorAuth(target net.Conn, msg LibP2PMessage) error
 	return n.writeFrame(target, data)
 }
 
-func (n *LibP2PNode) noiseHandshakeOutbound(conn net.Conn) bool {
+func (n *LibP2PNode) noiseHandshakeOutbound(conn net.Conn, remotePub ed25519.PublicKey) bool {
 	conn.SetDeadline(time.Now().Add(3 * time.Second))
 	defer conn.SetDeadline(time.Time{})
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
 		return false
 	}
-	payload := sha256.Sum256(append(n.pubKey, nonce...))
-	if _, err := conn.Write(payload[:]); err != nil {
+	payload := append(n.pubKey, nonce...)
+	sig := ed25519.Sign(n.privKey, payload)
+	if _, err := conn.Write(sig); err != nil {
 		return false
 	}
-	buf := make([]byte, 32)
+	if _, err := conn.Write(nonce); err != nil {
+		return false
+	}
+	buf := make([]byte, ed25519.SignatureSize+32)
 	if _, err := conn.Read(buf); err != nil {
 		return false
 	}
-	return bytes.Equal(buf, sha256.New().Sum(nil))
+	remoteSig := buf[:ed25519.SignatureSize]
+	remoteNonce := buf[ed25519.SignatureSize:]
+	if !ed25519.Verify(remotePub, append(remotePub, remoteNonce...), remoteSig) {
+		return false
+	}
+	return bytes.Equal(remoteNonce, nonce)
 }
 
-func (n *LibP2PNode) noiseHandshakeInbound(conn net.Conn) bool {
+func (n *LibP2PNode) noiseHandshakeInbound(conn net.Conn) (ed25519.PublicKey, bool) {
 	conn.SetDeadline(time.Now().Add(3 * time.Second))
 	defer conn.SetDeadline(time.Time{})
-	buf := make([]byte, 32)
-	if _, err := conn.Read(buf); err != nil {
-		return false
+	sig := make([]byte, ed25519.SignatureSize)
+	if _, err := conn.Read(sig); err != nil {
+		return nil, false
 	}
-	payload := sha256.Sum256(append(n.pubKey, buf...))
-	if _, err := conn.Write(payload[:]); err != nil {
-		return false
+	nonce := make([]byte, 32)
+	if _, err := conn.Read(nonce); err != nil {
+		return nil, false
 	}
-	return true
+	remotePub := make([]byte, ed25519.PublicKeySize)
+	copy(remotePub, sig)
+	if !ed25519.Verify(ed25519.PublicKey(remotePub), append(remotePub, nonce...), sig) {
+		return nil, false
+	}
+	reply := append(n.pubKey, nonce...)
+	replySig := ed25519.Sign(n.privKey, reply)
+	if _, err := conn.Write(replySig); err != nil {
+		return nil, false
+	}
+	return ed25519.PublicKey(remotePub), true
 }
 
-func (n *LibP2PNode) writeFrame(w interface{ Write([]byte) (int, error) }, data []byte) error {
-	_ = w.(interface{ SetWriteDeadline(time.Time) error }).SetWriteDeadline(time.Now().Add(3 * time.Second))
+func (n *LibP2PNode) writeFrame(w net.Conn, data []byte) error {
+	_ = w.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	var lenBuf [4]byte
 	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
 	if _, err := w.Write(lenBuf[:]); err != nil {
@@ -372,7 +392,7 @@ func (n *LibP2PNode) readMessage(r *bufio.Reader) (LibP2PMessage, bool, error) {
 	return msg, true, nil
 }
 
-func (n *LibP2PNode) writeVarintString(w interface{ Write([]byte) (int, error) }, s []byte) error {
+func (n *LibP2PNode) writeVarintString(w net.Conn, s []byte) error {
 	buf := make([]byte, binary.MaxVarintLen64)
 	vn := binary.PutUvarint(buf, uint64(len(s)))
 	if _, err := w.Write(buf[:vn]); err != nil {
@@ -384,7 +404,7 @@ func (n *LibP2PNode) writeVarintString(w interface{ Write([]byte) (int, error) }
 	return nil
 }
 
-func (n *LibP2PNode) readVarintString(r interface{ Read([]byte) (int, error) }) ([]byte, bool) {
+func (n *LibP2PNode) readVarintString(r *bufio.Reader) ([]byte, bool) {
 	var lenBuf [binary.MaxVarintLen64]byte
 	if _, err := r.Read(lenBuf[:]); err != nil {
 		return nil, false
@@ -454,5 +474,68 @@ func (n *LibP2PNode) ValidatorSet(validators []string) {
 	defer n.mu.Unlock()
 	for _, v := range validators {
 		n.validatorSet[v] = struct{}{}
+	}
+}
+
+func (n *LibP2PNode) startUPnP() {
+	defer n.wg.Done()
+	ticker := time.NewTicker(2 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-n.shutdownCh:
+			return
+		case <-ticker.C:
+			n.tryUPnP()
+		}
+	}
+}
+
+func (n *LibP2PNode) tryUPnP() {
+	host, _, _ := net.SplitHostPort(n.addr)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = ""
+	}
+	devices, err := goupnp.DiscoverDevices("upnp:rootdevice")
+	if err != nil || len(devices) == 0 {
+		return
+	}
+	for _, d := range devices {
+		if d.Err == nil && d.Location != nil {
+			_ = d.Location.String()
+		}
+	}
+}
+
+func (n *LibP2PNode) startNATPMP() {
+	defer n.wg.Done()
+	ticker := time.NewTicker(2 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-n.shutdownCh:
+			return
+		case <-ticker.C:
+			n.tryNATPMP()
+		}
+	}
+}
+
+func (n *LibP2PNode) tryNATPMP() {
+	host, _, _ := net.SplitHostPort(n.addr)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = ""
+	}
+	gateway := net.ParseIP(host)
+	if gateway == nil {
+		gateway = net.ParseIP("192.168.1.1")
+	}
+	if gateway == nil {
+		return
+	}
+	c := natpmp.NewClient(gateway)
+	_, err := c.GetExternalAddress()
+	if err != nil {
+		return
 	}
 }

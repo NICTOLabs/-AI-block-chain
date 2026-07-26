@@ -418,12 +418,21 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 }
 
 func (p2p *P2PNode) BroadcastBlock(block *blockchain.Block) {
-	msg := Message{Type: "block", Block: block}
-	payload, _ := json.Marshal(msg)
 	for _, peer := range p2p.peers {
 		if peer == "" || peer == p2p.addr || !p2p.trustedPeers[peer] {
 			continue
 		}
+		if p2p.chain != nil && len(p2p.chain.Chain) > 0 {
+			if w, ok := p2p.peerConns[peer]; ok && p2p.isConnAlive(w) {
+				writer := p2p.peerWriters[peer]
+				if writer != nil {
+					_ = p2p.WriteMessage(writer, Message{Type: "block", Block: block, Chain: p2p.chain.Chain})
+					_ = writer.Flush()
+					continue
+				}
+			}
+		}
+		payload, _ := json.Marshal(Message{Type: "block", Block: block})
 		_ = p2p.writePeer(peer, payload)
 	}
 }
