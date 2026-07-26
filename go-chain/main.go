@@ -1305,6 +1305,11 @@ func main() {
 	if *p2pBackend == "libp2p" {
 		embedded, err := p2ppackage.NewLibP2PNode(p2p.addr, envCfg.StrictP2P)
 		if err == nil {
+			vals := make([]string, 0, len(chain.Validators))
+			for addr := range chain.Validators {
+				vals = append(vals, addr)
+			}
+			embedded.ValidatorSet(vals)
 			_ = embedded.Start()
 			host = embedded
 			log.Printf("embedded libp2p host started peer=%s", embedded.PeerID())

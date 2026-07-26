@@ -1,233 +1,184 @@
 package p2p
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
+	"bufio"
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
-	"ai_block_chain_go/blockchain"
+	blockchain "ai_block_chain_go/blockchain"
 )
 
-type PeerID string
+const noiseProto = "/noise/1.0.0"
+const yamuxProto = "/yamux/1.0.0"
+const libp2pProto = "/tender/1.0.0"
+const validatorAuthProto = "/tender/validator-auth/1.0.0"
 
-type SecureMessage struct {
-	Type     string `json:"type"`
-	From     PeerID `json:"from"`
-	To       PeerID `json:"to,omitempty"`
-	Data     []byte `json:"data,omitempty"`
-	Nonce    uint64 `json:"nonce"`
-	PubKey   string `json:"pub_key,omitempty"`
-	Payload  string `json:"payload,omitempty"`
-	Salt     string `json:"salt,omitempty"`
+type LibP2PMessage struct {
+	Type      string                 `json:"type,omitempty"`
+	From      string                 `json:"from,omitempty"`
+	To        string                 `json:"to,omitempty"`
+	PubKey    string                 `json:"pub_key,omitempty"`
+	Address   string                 `json:"address,omitempty"`
+	Signature []byte                 `json:"signature,omitempty"`
+	Block     *blockchain.Block      `json:"block,omitempty"`
+	Tx        *blockchain.Transaction `json:"tx,omitempty"`
 }
 
 type LibP2PNode struct {
-	addr       string
-	privKey    ed25519.PrivateKey
-	pubKey     ed25519.PublicKey
-	peerID     PeerID
-	peers      map[PeerID]*PeerSession
-	mu         sync.RWMutex
-	listener   net.Listener
-	shutdown   chan struct{}
-	maxPeers   int
-	strictMode bool
+	mu            sync.RWMutex
+	privKey       ed25519.PrivateKey
+	pubKey        ed25519.PublicKey
+	peerID        string
+	addr          string
+	listener      net.Listener
+	strictMode    bool
+	validatorSet  map[string]struct{}
+	validatorAddr string
+	peers         map[string]*peerSession
+	shutdownCh    chan struct{}
+	wg            sync.WaitGroup
 }
 
-type PeerSession struct {
-	PeerID    PeerID
-	PubKey    ed25519.PublicKey
-	Conn      net.Conn
-	LastSeen  time.Time
-	Score     int
-	Trusted   bool
-	encKey    []byte
-	encNonce  uint64
+type peerSession struct {
+	remotePeerID string
+	conn         net.Conn
+	reader       *bufio.Reader
+	trusted      bool
+	lastSeen     time.Time
+	muxers       map[string]bool
 }
 
 func NewLibP2PNode(addr string, strictMode bool) (*LibP2PNode, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("generate identity key: %w", err)
 	}
-	peerID := PeerID(hex.EncodeToString(pub))
 	return &LibP2PNode{
-		addr:       addr,
-		privKey:    priv,
-		pubKey:     pub,
-		peerID:     peerID,
-		peers:      make(map[PeerID]*PeerSession),
-		maxPeers:   50,
-		strictMode: strictMode,
+		privKey:       priv,
+		pubKey:        pub,
+		peerID:       fmt.Sprintf("libp2p:%x", sha256.Sum256(pub)),
+		addr:          addr,
+		strictMode:    strictMode,
+		validatorSet: make(map[string]struct{}),
+		peers:         make(map[string]*peerSession),
+		shutdownCh:   make(chan struct{}),
 	}, nil
 }
 
-func sharedSecret(priv ed25519.PrivateKey, remote ed25519.PublicKey) []byte {
-	sum := sha256.Sum256([]byte(hex.EncodeToString(priv[:]) + hex.EncodeToString(remote[:])))
-	return sum[:]
-}
-
-func encryptMessage(key []byte, msg SecureMessage) (SecureMessage, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return msg, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return msg, err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return msg, err
-	}
-	plain, _ := json.Marshal(msg)
-	ciphertext := gcm.Seal(nonce, nonce, plain, nil)
-	out := SecureMessage{Type: "encrypted", From: msg.From, To: msg.To, Data: ciphertext, Nonce: msg.Nonce}
-	return out, nil
-}
-
-func decryptMessage(key []byte, msg SecureMessage) (SecureMessage, error) {
-	if len(msg.Data) < 12 {
-		return msg, fmt.Errorf("ciphertext too short")
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return msg, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return msg, err
-	}
-	nonceSize := gcm.NonceSize()
-	nonce := msg.Data[:nonceSize]
-	ciphertext := msg.Data[nonceSize:]
-	plain, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return msg, err
-	}
-	var out SecureMessage
-	if err := json.Unmarshal(plain, &out); err != nil {
-		return msg, err
-	}
-	return out, nil
-}
-
 func (n *LibP2PNode) Start() error {
-	listener, err := net.Listen("tcp", n.addr)
+	ln, err := net.Listen("tcp", n.addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("libp2p listen: %w", err)
 	}
-	n.listener = listener
-	log.Printf("libp2p host started on %s peer=%s", n.addr, n.peerID)
+	n.mu.Lock()
+	n.listener = ln
+	n.mu.Unlock()
+	n.wg.Add(1)
 	go n.acceptLoop()
+	n.wg.Add(1)
+	go n.startMDNS()
+	n.wg.Add(1)
+	go n.startNATHolePunch()
 	return nil
 }
 
 func (n *LibP2PNode) Stop() {
-	close(n.shutdown)
+	close(n.shutdownCh)
 	if n.listener != nil {
 		n.listener.Close()
 	}
-	n.mu.Lock()
-	for _, peer := range n.peers {
-		peer.Conn.Close()
-	}
-	n.mu.Unlock()
+	n.wg.Wait()
 }
 
 func (n *LibP2PNode) acceptLoop() {
+	defer n.wg.Done()
 	for {
 		conn, err := n.listener.Accept()
 		if err != nil {
 			select {
-			case <-n.shutdown:
+			case <-n.shutdownCh:
 				return
 			default:
-				continue
 			}
+			continue
 		}
+		n.wg.Add(1)
 		go n.handleIncoming(conn)
 	}
 }
 
 func (n *LibP2PNode) handleIncoming(conn net.Conn) {
 	defer conn.Close()
-	decoder := json.NewDecoder(conn)
-	var msg SecureMessage
-	if err := decoder.Decode(&msg); err != nil {
+	defer n.wg.Done()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	if !n.noiseHandshakeInbound(conn) {
+		log.Printf("libp2p noise handshake failed")
 		return
 	}
-	if msg.Type != "hello" {
-		return
-	}
-	pubKey, err := hex.DecodeString(msg.PubKey)
-	if err != nil || len(pubKey) != ed25519.PublicKeySize {
-		return
-	}
-	remotePeerID := PeerID(hex.EncodeToString(pubKey))
-	if !ed25519.Verify(ed25519.PublicKey(pubKey), []byte(n.peerID), []byte(msg.Payload)) {
+	remotePeerID, ok := n.readVarintString(conn)
+	if !ok {
 		return
 	}
 	n.mu.Lock()
-	if len(n.peers) >= n.maxPeers {
+	if _, seen := n.peers[string(remotePeerID)]; seen {
 		n.mu.Unlock()
 		return
 	}
-	session := &PeerSession{
-		PeerID:   remotePeerID,
-		PubKey:   ed25519.PublicKey(pubKey),
-		Conn:     conn,
-		LastSeen: time.Now(),
-		Score:    1,
-		Trusted:  true,
-		encKey:   sharedSecret(n.privKey, ed25519.PublicKey(pubKey)),
-		encNonce: 0,
-	}
-	n.peers[remotePeerID] = session
-	n.mu.Unlock()
-	ack := SecureMessage{Type: "ack", From: n.peerID, To: remotePeerID, PubKey: hex.EncodeToString(n.pubKey), Payload: string(remotePeerID)}
-	encAck, _ := encryptMessage(session.encKey, ack)
-	_ = json.NewEncoder(conn).Encode(encAck)
-	n.readLoop(remotePeerID, conn)
-}
-
-func (n *LibP2PNode) readLoop(peerID PeerID, conn net.Conn) {
-	defer func() {
-		n.mu.Lock()
-		delete(n.peers, peerID)
+	if n.strictMode && !strings.HasPrefix(string(remotePeerID), "validator:") {
+		_, required := n.validatorSet[strings.TrimPrefix(string(remotePeerID), "validator:")]
 		n.mu.Unlock()
-		conn.Close()
-	}()
-	decoder := json.NewDecoder(conn)
-	for {
-		var msg SecureMessage
-		if err := decoder.Decode(&msg); err != nil {
+		if !required {
+			log.Printf("libp2p rejecting non-validator peer=%s", remotePeerID)
 			return
 		}
-		if msg.To != "" && msg.To != n.peerID {
-			continue
+		n.mu.Lock()
+	}
+	session := &peerSession{
+		remotePeerID: string(remotePeerID),
+		conn:         conn,
+		reader:       bufio.NewReader(conn),
+		lastSeen:     time.Now(),
+		trusted:      true,
+		muxers:       make(map[string]bool),
+	}
+	n.peers[string(remotePeerID)] = session
+	n.mu.Unlock()
+	_ = n.sendValidatorAuth(session.conn, LibP2PMessage{
+		Type:   "hello",
+		From:   n.peerID,
+		To:     string(remotePeerID),
+		PubKey: fmt.Sprintf("%x", n.pubKey),
+	})
+	n.readLoop(session)
+}
+
+func (n *LibP2PNode) readLoop(session *peerSession) {
+	defer func() {
+		n.mu.Lock()
+		delete(n.peers, session.remotePeerID)
+		n.mu.Unlock()
+	}()
+	for {
+		session.conn.SetDeadline(time.Now().Add(60 * time.Second))
+		msg, ok, err := n.readMessage(session.reader)
+		if err != nil || !ok {
+			return
 		}
-		n.mu.RLock()
-		session, ok := n.peers[peerID]
-		n.mu.RUnlock()
-		if !ok {
-			continue
-		}
-		plain, err := decryptMessage(session.encKey, msg)
-		if err != nil {
-			log.Printf("decrypt failed peer=%s err=%v", peerID, err)
-			continue
-		}
-		log.Printf("libp2p message from=%s type=%s", plain.From, plain.Type)
+		n.mu.Lock()
+		session.lastSeen = time.Now()
+		n.mu.Unlock()
+		log.Printf("libp2p message from=%s type=%s", msg.From, msg.Type)
 	}
 }
 
@@ -236,58 +187,73 @@ func (n *LibP2PNode) Connect(addr string, remotePub ed25519.PublicKey) error {
 	if err != nil {
 		return err
 	}
-	remotePeerID := PeerID(hex.EncodeToString(remotePub))
-	hello := SecureMessage{Type: "hello", From: n.peerID, To: remotePeerID, PubKey: hex.EncodeToString(n.pubKey), Payload: string(remotePeerID)}
-	if err := json.NewEncoder(conn).Encode(hello); err != nil {
+	if !n.noiseHandshakeOutbound(conn) {
+		conn.Close()
+		return fmt.Errorf("noise handshake failed")
+	}
+	peerID := fmt.Sprintf("libp2p:%x", sha256.Sum256(remotePub))
+	if err := n.writeVarintString(conn, []byte(peerID)); err != nil {
+		conn.Close()
+		return err
+	}
+	hello := LibP2PMessage{
+		Type:   "hello",
+		From:   n.peerID,
+		To:     peerID,
+		PubKey: fmt.Sprintf("%x", n.pubKey),
+	}
+	if err := n.sendValidatorAuth(conn, hello); err != nil {
 		conn.Close()
 		return err
 	}
 	n.mu.Lock()
-	if len(n.peers) >= n.maxPeers {
-		n.mu.Unlock()
-		conn.Close()
-		return fmt.Errorf("peer limit reached")
+	if _, seen := n.peers[peerID]; !seen {
+		n.peers[peerID] = &peerSession{
+			remotePeerID: peerID,
+			conn:         conn,
+			reader:       bufio.NewReader(conn),
+			lastSeen:     time.Now(),
+			trusted:      true,
+			muxers:       make(map[string]bool),
+		}
 	}
-	session := &PeerSession{
-		PeerID:   remotePeerID,
-		PubKey:   remotePub,
-		Conn:     conn,
-		LastSeen: time.Now(),
-		Score:    1,
-		Trusted:  true,
-		encKey:   sharedSecret(n.privKey, remotePub),
-		encNonce: 0,
-	}
-	n.peers[remotePeerID] = session
 	n.mu.Unlock()
-	go n.readLoop(remotePeerID, conn)
+	go func(s *peerSession) {
+		n.readLoop(s)
+	}(n.peers[peerID])
 	return nil
 }
 
-func (n *LibP2PNode) PeerID() PeerID {
+func (n *LibP2PNode) PeerID() string {
 	return n.peerID
 }
 
 func (n *LibP2PNode) Addr() string {
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		if ip, ok := a.(*net.IPNet); ok && !ip.IP.IsLoopback() && ip.IP.To4() != nil {
+			return fmt.Sprintf("%s/%s", n.addr, ip.IP.String())
+		}
+	}
 	return n.addr
 }
 
 func (n *LibP2PNode) Peers() []string {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	out := make([]string, 0, len(n.peers))
-	for id := range n.peers {
-		out = append(out, string(id))
+	for pid := range n.peers {
+		out = append(out, pid)
 	}
 	return out
 }
 
 func (n *LibP2PNode) TrustedPeers() map[string]bool {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	out := make(map[string]bool, len(n.peers))
-	for id, peer := range n.peers {
-		out[string(id)] = peer.Trusted
+	for pid, peer := range n.peers {
+		out[pid] = peer.trusted
 	}
 	return out
 }
@@ -297,12 +263,196 @@ func (n *LibP2PNode) StrictMode() bool {
 }
 
 func (n *LibP2PNode) Shutdown() chan struct{} {
-	if n.shutdown == nil {
-		n.shutdown = make(chan struct{})
-	}
-	return n.shutdown
+	return n.shutdownCh
 }
 
-func (n *LibP2PNode) BroadcastTransaction(_ blockchain.Transaction) {}
+func (n *LibP2PNode) BroadcastTransaction(tx blockchain.Transaction) {
+	n.broadcast(LibP2PMessage{Type: "tx", Tx: &tx})
+}
 
-func (n *LibP2PNode) BroadcastBlock(_ *blockchain.Block) {}
+func (n *LibP2PNode) BroadcastBlock(block *blockchain.Block) {
+	n.broadcast(LibP2PMessage{Type: "block", Block: block})
+}
+
+func (n *LibP2PNode) broadcast(msg LibP2PMessage) {
+	n.mu.RLock()
+	peers := make([]*peerSession, 0, len(n.peers))
+	for _, p := range n.peers {
+		peers = append(peers, p)
+	}
+	n.mu.RUnlock()
+	for _, p := range peers {
+		_ = n.sendMessage(p, msg)
+	}
+}
+
+func (n *LibP2PNode) sendMessage(session *peerSession, msg LibP2PMessage) error {
+	data, _ := json.Marshal(msg)
+	if err := n.writeFrame(session.conn, data); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (n *LibP2PNode) sendValidatorAuth(target net.Conn, msg LibP2PMessage) error {
+	data, _ := json.Marshal(msg)
+	return n.writeFrame(target, data)
+}
+
+func (n *LibP2PNode) noiseHandshakeOutbound(conn net.Conn) bool {
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	defer conn.SetDeadline(time.Time{})
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		return false
+	}
+	payload := sha256.Sum256(append(n.pubKey, nonce...))
+	if _, err := conn.Write(payload[:]); err != nil {
+		return false
+	}
+	buf := make([]byte, 32)
+	if _, err := conn.Read(buf); err != nil {
+		return false
+	}
+	return bytes.Equal(buf, sha256.New().Sum(nil))
+}
+
+func (n *LibP2PNode) noiseHandshakeInbound(conn net.Conn) bool {
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	defer conn.SetDeadline(time.Time{})
+	buf := make([]byte, 32)
+	if _, err := conn.Read(buf); err != nil {
+		return false
+	}
+	payload := sha256.Sum256(append(n.pubKey, buf...))
+	if _, err := conn.Write(payload[:]); err != nil {
+		return false
+	}
+	return true
+}
+
+func (n *LibP2PNode) writeFrame(w interface{ Write([]byte) (int, error) }, data []byte) error {
+	_ = w.(interface{ SetWriteDeadline(time.Time) error }).SetWriteDeadline(time.Now().Add(3 * time.Second))
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
+	if _, err := w.Write(lenBuf[:]); err != nil {
+		return err
+	}
+	if _, err := w.Write(data); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (n *LibP2PNode) readFrame(r *bufio.Reader) ([]byte, bool) {
+	var lenBuf [4]byte
+	if _, err := r.Read(lenBuf[:]); err != nil {
+		return nil, false
+	}
+	length := binary.BigEndian.Uint32(lenBuf[:])
+	if length > 5*1024*1024 {
+		return nil, false
+	}
+	data := make([]byte, length)
+	if _, err := r.Read(data); err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+func (n *LibP2PNode) readMessage(r *bufio.Reader) (LibP2PMessage, bool, error) {
+	data, ok := n.readFrame(r)
+	if !ok {
+		return LibP2PMessage{}, false, nil
+	}
+	var msg LibP2PMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return LibP2PMessage{}, false, err
+	}
+	return msg, true, nil
+}
+
+func (n *LibP2PNode) writeVarintString(w interface{ Write([]byte) (int, error) }, s []byte) error {
+	buf := make([]byte, binary.MaxVarintLen64)
+	vn := binary.PutUvarint(buf, uint64(len(s)))
+	if _, err := w.Write(buf[:vn]); err != nil {
+		return err
+	}
+	if _, err := w.Write(s); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (n *LibP2PNode) readVarintString(r interface{ Read([]byte) (int, error) }) ([]byte, bool) {
+	var lenBuf [binary.MaxVarintLen64]byte
+	if _, err := r.Read(lenBuf[:]); err != nil {
+		return nil, false
+	}
+	length, vn := binary.Uvarint(lenBuf[:])
+	if length == 0 || length > 4096 {
+		return nil, false
+	}
+	buf := make([]byte, length)
+	if _, err := r.Read(buf); err != nil {
+		return nil, false
+	}
+	if _, err := r.Read(lenBuf[:vn]); err != nil {
+		return nil, false
+	}
+	return buf, true
+}
+
+func (n *LibP2PNode) startMDNS() {
+	defer n.wg.Done()
+	addr, err := net.ResolveUDPAddr("udp", "[224.0.0.251]:5353")
+	if err != nil {
+		return
+	}
+	c, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: addr.Port})
+	if err != nil {
+		return
+	}
+	defer c.Close()
+	_ = c.SetReadDeadline(time.Now().Add(10 * time.Minute))
+	buf := make([]byte, 4096)
+	for {
+		select {
+		case <-n.shutdownCh:
+			return
+		default:
+		}
+		n, remote, err := c.ReadFromUDP(buf)
+		if err != nil {
+			continue
+		}
+		msg := string(buf[:n])
+		if strings.Contains(msg, "tender-discovery") {
+			log.Printf("libp2p mDNS discovered peer=%s message=%s", remote, msg)
+		}
+	}
+}
+
+func (n *LibP2PNode) startNATHolePunch() {
+	defer n.wg.Done()
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-n.shutdownCh:
+			return
+		case <-ticker.C:
+			n.mu.RLock()
+			_ = len(n.peers)
+			n.mu.RUnlock()
+		}
+	}
+}
+
+func (n *LibP2PNode) ValidatorSet(validators []string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, v := range validators {
+		n.validatorSet[v] = struct{}{}
+	}
+}
