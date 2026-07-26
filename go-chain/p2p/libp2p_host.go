@@ -1,8 +1,11 @@
 package p2p
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -24,6 +27,7 @@ type SecureMessage struct {
 	Nonce    uint64 `json:"nonce"`
 	PubKey   string `json:"pub_key,omitempty"`
 	Payload  string `json:"payload,omitempty"`
+	Salt     string `json:"salt,omitempty"`
 }
 
 type LibP2PNode struct {
@@ -45,6 +49,8 @@ type PeerSession struct {
 	LastSeen  time.Time
 	Score     int
 	Trusted   bool
+	encKey    []byte
+	encNonce  uint64
 }
 
 func NewLibP2PNode(addr string) (*LibP2PNode, error) {
@@ -61,6 +67,56 @@ func NewLibP2PNode(addr string) (*LibP2PNode, error) {
 		peers:    make(map[PeerID]*PeerSession),
 		maxPeers: 50,
 	}, nil
+}
+
+func sharedSecret(priv ed25519.PrivateKey, remote ed25519.PublicKey) []byte {
+	sum := sha256.Sum256([]byte(hex.EncodeToString(priv[:]) + hex.EncodeToString(remote[:])))
+	return sum[:]
+}
+
+func encryptMessage(key []byte, msg SecureMessage) (SecureMessage, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return msg, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return msg, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return msg, err
+	}
+	plain, _ := json.Marshal(msg)
+	ciphertext := gcm.Seal(nonce, nonce, plain, nil)
+	out := SecureMessage{Type: "encrypted", From: msg.From, To: msg.To, Data: ciphertext, Nonce: msg.Nonce}
+	return out, nil
+}
+
+func decryptMessage(key []byte, msg SecureMessage) (SecureMessage, error) {
+	if len(msg.Data) < 12 {
+		return msg, fmt.Errorf("ciphertext too short")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return msg, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return msg, err
+	}
+	nonceSize := gcm.NonceSize()
+	nonce := msg.Data[:nonceSize]
+	ciphertext := msg.Data[nonceSize:]
+	plain, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return msg, err
+	}
+	var out SecureMessage
+	if err := json.Unmarshal(plain, &out); err != nil {
+		return msg, err
+	}
+	return out, nil
 }
 
 func (n *LibP2PNode) Start() error {
@@ -131,17 +187,14 @@ func (n *LibP2PNode) handleIncoming(conn net.Conn) {
 		LastSeen: time.Now(),
 		Score:    1,
 		Trusted:  true,
+		encKey:   sharedSecret(n.privKey, ed25519.PublicKey(pubKey)),
+		encNonce: 0,
 	}
 	n.peers[remotePeerID] = session
 	n.mu.Unlock()
-	ack := SecureMessage{
-		Type:    "ack",
-		From:    n.peerID,
-		To:      remotePeerID,
-		PubKey:  hex.EncodeToString(n.pubKey),
-		Payload: string(remotePeerID),
-	}
-	_ = json.NewEncoder(conn).Encode(ack)
+	ack := SecureMessage{Type: "ack", From: n.peerID, To: remotePeerID, PubKey: hex.EncodeToString(n.pubKey), Payload: string(remotePeerID)}
+	encAck, _ := encryptMessage(session.encKey, ack)
+	_ = json.NewEncoder(conn).Encode(encAck)
 	n.readLoop(remotePeerID, conn)
 }
 
@@ -161,7 +214,18 @@ func (n *LibP2PNode) readLoop(peerID PeerID, conn net.Conn) {
 		if msg.To != "" && msg.To != n.peerID {
 			continue
 		}
-		log.Printf("libp2p message from=%s type=%s", msg.From, msg.Type)
+		n.mu.RLock()
+		session, ok := n.peers[peerID]
+		n.mu.RUnlock()
+		if !ok {
+			continue
+		}
+		plain, err := decryptMessage(session.encKey, msg)
+		if err != nil {
+			log.Printf("decrypt failed peer=%s err=%v", peerID, err)
+			continue
+		}
+		log.Printf("libp2p message from=%s type=%s", plain.From, plain.Type)
 	}
 }
 
@@ -171,13 +235,7 @@ func (n *LibP2PNode) Connect(addr string, remotePub ed25519.PublicKey) error {
 		return err
 	}
 	remotePeerID := PeerID(hex.EncodeToString(remotePub))
-	hello := SecureMessage{
-		Type:    "hello",
-		From:    n.peerID,
-		To:      remotePeerID,
-		PubKey:  hex.EncodeToString(n.pubKey),
-		Payload: string(remotePeerID),
-	}
+	hello := SecureMessage{Type: "hello", From: n.peerID, To: remotePeerID, PubKey: hex.EncodeToString(n.pubKey), Payload: string(remotePeerID)}
 	if err := json.NewEncoder(conn).Encode(hello); err != nil {
 		conn.Close()
 		return err
@@ -195,6 +253,8 @@ func (n *LibP2PNode) Connect(addr string, remotePub ed25519.PublicKey) error {
 		LastSeen: time.Now(),
 		Score:    1,
 		Trusted:  true,
+		encKey:   sharedSecret(n.privKey, remotePub),
+		encNonce: 0,
 	}
 	n.peers[remotePeerID] = session
 	n.mu.Unlock()
