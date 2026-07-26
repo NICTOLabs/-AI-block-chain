@@ -190,6 +190,7 @@ type FinalityVoteSignature struct {
 }
 
 type Validator struct {
+	PublicKey  string `json:"public_key"`
 	Address     string `json:"address"`
 	Stake       uint64 `json:"stake"`
 	Active      bool   `json:"active"`
