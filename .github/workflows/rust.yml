@@ -1,0 +1,16 @@
+name: rust
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path consensus/Cargo.toml
+      - run: cargo test --manifest-path consensus/Cargo.toml

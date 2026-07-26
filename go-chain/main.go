@@ -279,6 +279,18 @@ func (bc *Blockchain) createGenesisBlock() {
 	bc.GenesisHash = genesis.BlockHash
 }
 
+func (bc *Blockchain) StateRootSnapshotEquivalent() string {
+	view := map[string]any{
+		"chain_id":       bc.ChainID,
+		"height":         len(bc.Chain),
+		"tx_count":       len(bc.Chain),
+		"validator_set":  bc.Authorities,
+	}
+	data, _ := json.Marshal(view)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
 func (bc *Blockchain) saveToDisk() error {
 	state := nodeState{
 		Chain:       bc.Chain,
@@ -655,7 +667,7 @@ func (bc *Blockchain) RegisterValidator(address string, stake uint64) error {
 	}
 	account.Balance -= stake
 	account.Staked += stake
-	bc.Validators[address] = Validator{Address: address, Stake: stake, Active: true, JoinedAt: time.Now().Unix(), Performance: 100}
+	bc.Validators[address] = Validator{Address: address, Stake: stake, Active: true, JoinedAt: time.Now().Unix(), Performance: 100, PublicKeyVersion: 0, KeyRotatedAt: time.Now().Unix(), NextRotationAt: time.Now().Unix() + 30*24*60*60}
 	bc.appendAuditEntry("validator_registered", address, fmt.Sprintf("stake=%d", stake))
 	return nil
 }
@@ -1226,6 +1238,12 @@ func main() {
 	}
 
 	chain := NewBlockchain(chainConsensus, envCfg.DataDir, *chainID, *genesisPath)
+	if getEnvBoolOrDefault("TENDER_SEALED_MODE", true) && blockchain.GlobalSecurity.IsSealed() {
+		snapshot := chain.StateRootSnapshotEquivalent()
+		if ok := blockchain.GlobalSecurity.VerifyIntegrity("blockchain_state", []byte(snapshot)); !ok {
+			log.Fatal("sealed-mode integrity check failed")
+		}
+	}
 	p2p := &P2PNode{addr: fmt.Sprintf("0.0.0.0:%d", envCfg.P2PPort), peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 50, strictMode: envCfg.StrictP2P}
 	if *peer != "" {
 		p2p.peers = append(p2p.peers, *peer)

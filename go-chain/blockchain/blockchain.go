@@ -385,6 +385,10 @@ func (bc *Blockchain) Stake(address string, amount uint64) {
 func (bc *Blockchain) Slash(address string, amount uint64) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
+	bc.slashLocked(address, amount)
+}
+
+func (bc *Blockchain) slashLocked(address string, amount uint64) {
 	account := bc.Ledger[address]
 	if account == nil || account.Staked < amount {
 		return
@@ -551,7 +555,7 @@ func (bc *Blockchain) RegisterValidator(address string, stake uint64, pubKey str
 	}
 	account.Balance -= stake
 	account.Staked += stake
-	bc.Validators[address] = Validator{Address: address, Stake: stake, Active: true, JoinedAt: time.Now().Unix(), Performance: 100, PublicKey: pubKey}
+	bc.Validators[address] = Validator{Address: address, Stake: stake, Active: true, JoinedAt: time.Now().Unix(), Performance: 100, PublicKey: pubKey, PublicKeyVersion: 0, KeyRotatedAt: time.Now().Unix(), NextRotationAt: time.Now().Unix() + 30*24*60*60}
 	bc.appendAuditEntry("validator_registered", address, fmt.Sprintf("stake=%d", stake))
 	return nil
 }
@@ -719,6 +723,11 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	}
 	bc.applyBlock(block)
 	bc.Chain = append(bc.Chain, block)
+	bc.rotateValidatorKeysLocked(time.Now().Unix())
+	if bc.Consensus != ProofOfWork {
+		bc.collectFinalityVotesLocked(block.Index)
+		_ = bc.tryFinalizeBlockLocked(block.Index)
+	}
 	bc.Pending = []Transaction{}
 	bc.adjustDifficulty()
 	bc.RecordMinerSubmission(author)
@@ -1167,6 +1176,10 @@ func (bc *Blockchain) CollectFinalityVote(blockIndex uint64, voter string) error
 func (bc *Blockchain) TryFinalizeBlock(blockIndex uint64) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
+	return bc.tryFinalizeBlockLocked(blockIndex)
+}
+
+func (bc *Blockchain) tryFinalizeBlockLocked(blockIndex uint64) error {
 	voters, ok := bc.FinalityVotes[blockIndex]
 	if !ok {
 		return fmt.Errorf("no votes collected")
@@ -1175,13 +1188,71 @@ func (bc *Blockchain) TryFinalizeBlock(blockIndex uint64) error {
 	if len(voters) < threshold {
 		return fmt.Errorf("insufficient votes: %d < %d", len(voters), threshold)
 	}
+	for addr, v := range bc.Validators {
+		if _, voted := voters[addr]; !voted {
+			slashAmount := v.Stake / 10
+			if slashAmount == 0 {
+				slashAmount = 1
+			}
+			bc.slashLocked(addr, slashAmount)
+			v.Stake -= slashAmount
+			if v.Stake == 0 {
+				v.Active = false
+			}
+			bc.Validators[addr] = v
+			bc.appendAuditEntry("validator_slashed", addr, fmt.Sprintf("block=%d amount=%d", blockIndex, slashAmount))
+		}
+	}
 	bc.LastFinalized = blockIndex
 	bc.FinalizedBlocks[blockIndex] = struct{}{}
 	bc.appendAuditEntry("block_finalized", "system", fmt.Sprintf("index=%d votes=%d threshold=%d", blockIndex, len(voters), threshold))
 	return nil
 }
 
+func (bc *Blockchain) collectFinalityVotesLocked(blockIndex uint64) {
+	if blockIndex >= uint64(len(bc.Chain)) {
+		return
+	}
+	block := bc.Chain[blockIndex]
+	for _, v := range bc.Validators {
+		if !v.Active || v.PublicKey == "" {
+			continue
+		}
+		_, exists := bc.FinalityVotes[blockIndex]
+		if !exists {
+			bc.FinalityVotes[blockIndex] = make(map[string]struct{})
+		}
+		if _, voted := bc.FinalityVotes[blockIndex][v.Address]; voted {
+			continue
+		}
+		payload := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s", block.BlockHash, "finalize", v.PublicKey)))
+		sig := make([]byte, ed25519.SignatureSize)
+		copy(sig, payload[:])
+		vote := FinalityVoteSignature{BlockHash: block.BlockHash, Voter: v.PublicKey, Vote: "finalize", Signature: sig}
+		bc.FinalitySignatures[blockIndex] = append(bc.FinalitySignatures[blockIndex], vote)
+		bc.FinalityVotes[blockIndex][v.Address] = struct{}{}
+	}
+}
+
 const twoWeekSeconds = 1_209_600
+
+func (bc *Blockchain) RotateValidatorKeys(now int64) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	bc.rotateValidatorKeysLocked(now)
+}
+
+func (bc *Blockchain) rotateValidatorKeysLocked(now int64) {
+	for addr, v := range bc.Validators {
+		if v.Active && v.Stake > 0 && v.NeedsRotation(now) {
+			raw := sha256.Sum256([]byte(v.PublicKey + fmt.Sprintf("v%d", v.PublicKeyVersion+1)))
+			newPubKey := hex.EncodeToString(raw[:])
+			updated := v.RotateKey(newPubKey, now)
+			bc.Validators[addr] = updated
+			bc.appendAuditEntry("validator_key_rotated", addr, fmt.Sprintf("version=%d", updated.PublicKeyVersion))
+		}
+	}
+}
 
 func (bc *Blockchain) MineRewardFor(miner string) uint64 {
 	stats, ok := bc.MinerStats[miner]
@@ -1357,12 +1428,15 @@ func (bc *Blockchain) LoadGenesis(path string) error {
 			bc.Ledger[val.Address].Staked = val.Stake
 		}
 		bc.Validators[val.Address] = Validator{
-			Address:     val.Address,
-			Stake:       val.Stake,
-			Active:      true,
-			JoinedAt:    time.Now().Unix(),
-			Performance: 100,
-			PublicKey:   val.PublicKey,
+			Address:          val.Address,
+			Stake:            val.Stake,
+			Active:           true,
+			JoinedAt:         time.Now().Unix(),
+			Performance:      100,
+			PublicKey:        val.PublicKey,
+			PublicKeyVersion: 0,
+			KeyRotatedAt:     time.Now().Unix(),
+			NextRotationAt:   time.Now().Unix() + 30*24*60*60,
 		}
 		bc.AddAuthority(val.Address)
 	}

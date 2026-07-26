@@ -342,6 +342,30 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 			"signatures":     chain.FinalitySignatures,
 		})
 	})
+	mux.HandleFunc("/api/finality/vote", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			BlockIndex uint64 `json:"block_index"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		voter := r.RemoteAddr
+		if v, ok := r.Context().Value("validator_address").(string); ok && v != "" {
+			voter = v
+		}
+		_ = chain.CollectFinalityVote(payload.BlockIndex, voter)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "voted", "voter": voter})
+	})
 	mux.HandleFunc("/api/audit", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		chain.RLock()

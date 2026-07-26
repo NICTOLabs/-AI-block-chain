@@ -190,12 +190,30 @@ type FinalityVoteSignature struct {
 }
 
 type Validator struct {
-	PublicKey  string `json:"public_key"`
-	Address     string `json:"address"`
-	Stake       uint64 `json:"stake"`
-	Active      bool   `json:"active"`
-	JoinedAt    int64  `json:"joined_at"`
-	Performance uint64 `json:"performance"`
+	PublicKey        string `json:"public_key"`
+	Address          string `json:"address"`
+	Stake            uint64 `json:"stake"`
+	Active           bool   `json:"active"`
+	JoinedAt         int64  `json:"joined_at"`
+	Performance      uint64 `json:"performance"`
+	PublicKeyVersion uint64 `json:"public_key_version"`
+	KeyRotatedAt     int64  `json:"key_rotated_at"`
+	NextRotationAt   int64  `json:"next_rotation_at"`
+}
+
+func (v Validator) NeedsRotation(now int64) bool {
+	if v.NextRotationAt == 0 {
+		return true
+	}
+	return now >= v.NextRotationAt
+}
+
+func (v Validator) RotateKey(newPubKey string, now int64) Validator {
+	v.PublicKey = newPubKey
+	v.PublicKeyVersion++
+	v.KeyRotatedAt = now
+	v.NextRotationAt = now + 30*24*60*60
+	return v
 }
 
 type nodeState struct {

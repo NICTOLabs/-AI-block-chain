@@ -1,0 +1,16 @@
+name: cpp
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -B vm/build -S vm -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build vm/build --config Release
+      - run: ctest --test-dir vm/build --output-on-failure

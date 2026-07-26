@@ -1,0 +1,19 @@
+--- a/go-chain/blockchain/blockchain.go
++++ b/go-chain/blockchain/blockchain.go
+@@ -137,6 +137,7 @@
+ type Blockchain struct {
+ 	FinishSignatures map[string]FinishVoteSignature
+ 	FinishVotes      map[uint64][]string
+ 	FinishThreshold       int
++	FinishCollected      map[uint64]int
+ }
+ 
+ type Blockchain struct {
+@@ -235,6 +236,7 @@
+ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blockchain {
+ 		FinishThreshold:       2,
+ 		FinishCollected: make(map[uint64]int),
++		FinishCollected: make(map[uint64]int),
+ 	}
+ }
+ 

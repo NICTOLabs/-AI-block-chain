@@ -69,3 +69,14 @@ func TestIdempotencyMiddlewareRejectsDuplicateKeys(t *testing.T) {
 		t.Fatalf("expected handler to be called once for duplicate idempotency key, got %d", called)
 	}
 }
+
+func BenchmarkRequireAuth(b *testing.B) {
+	cfg := ServerConfig{APIKey: "super-secret", EnableAuth: true}
+	req := httptest.NewRequest(http.MethodGet, "/api/chain", nil)
+	req.Header.Set("Authorization", "Bearer super-secret")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+	_ = requireAuth(req, cfg)
+}
+
+}
