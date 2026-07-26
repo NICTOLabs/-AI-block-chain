@@ -112,17 +112,23 @@ type Blockchain struct {
 }
 
 type P2PNode struct {
-	addr         string
-	peers        []string
-	peerScores   map[string]int
-	trustedPeers map[string]bool
-	chain        *Blockchain
-	listener     net.Listener
-	shutdown     chan struct{}
-	maxPeers     int
-	strictMode   bool
-	nodeSecret   string
-	mutedPeers   map[string]time.Time
+	addr           string
+	peers          []string
+	peerScores     map[string]int
+	trustedPeers   map[string]bool
+	chain          *Blockchain
+	listener       net.Listener
+	shutdown       chan struct{}
+	maxPeers       int
+	strictMode     bool
+	nodeSecret     string
+	mutedPeers     map[string]time.Time
+	seenMsgIDs     map[string]time.Time
+	peerConns      map[string]net.Conn
+	peerWriters    map[string]*bufio.Writer
+	peerMu         sync.Mutex
+	dialBackoff    map[string]time.Time
+	backoffMu      sync.Mutex
 }
 
 type p2pHost interface {
@@ -209,12 +215,14 @@ type nodeState struct {
 }
 
 type p2pMessage struct {
-	Type  string       `json:"type"`
-	From  string       `json:"from,omitempty"`
-	Block *Block       `json:"block,omitempty"`
-	Chain []Block      `json:"chain,omitempty"`
-	Tx    *Transaction `json:"tx,omitempty"`
-	Peer  *NodeInfo    `json:"peer,omitempty"`
+	Type     string       `json:"type"`
+	From     string       `json:"from,omitempty"`
+	NodeID   string       `json:"node_id,omitempty"`
+	Block    *Block       `json:"block,omitempty"`
+	Chain    []Block      `json:"chain,omitempty"`
+	Tx       *Transaction `json:"tx,omitempty"`
+	Peer     *NodeInfo    `json:"peer,omitempty"`
+	StreamID string       `json:"stream_id,omitempty"`
 }
 
 func NewBlockchain(consensus ConsensusType, dataDir string, chainID string, genesisPath string) *Blockchain {
@@ -1244,7 +1252,7 @@ func main() {
 			log.Fatal("sealed-mode integrity check failed")
 		}
 	}
-	p2p := &P2PNode{addr: fmt.Sprintf("0.0.0.0:%d", envCfg.P2PPort), peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 50, strictMode: envCfg.StrictP2P}
+	p2p := &P2PNode{addr: fmt.Sprintf("0.0.0.0:%d", envCfg.P2PPort), peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 50, strictMode: envCfg.StrictP2P, seenMsgIDs: make(map[string]time.Time), peerConns: make(map[string]net.Conn), peerWriters: make(map[string]*bufio.Writer), dialBackoff: make(map[string]time.Time)}
 	if *peer != "" {
 		p2p.peers = append(p2p.peers, *peer)
 	}
@@ -1849,18 +1857,164 @@ func (p2p *P2PNode) connectToPeers() {
 			break
 		}
 		go func(target string) {
-			conn, err := net.Dial("tcp", target)
-			if err != nil {
-				log.Printf("{\"event\":\"connect_peer\",\"peer\":\"%s\",\"error\":\"%v\"}", target, err)
-				return
-			}
-			defer conn.Close()
-			p2p.peerScores[target] = 1
-			p2p.trustedPeers[target] = true
-			_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers}})
-			p2p.handleConn(conn)
+			p2p.announceMDNS()
+			_ = p2p.writePeer(target, mustMarshal(p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers}}))
 		}(peer)
 	}
+}
+
+func (p2p *P2PNode) announceMDNS() {
+	_ = p2p.announceMDNSLocked()
+}
+
+func (p2p *P2PNode) announceMDNSLocked() error {
+	addr, err := net.ResolveUDPAddr("udp", "[224.0.0.251]:5353")
+	if err != nil {
+		return err
+	}
+	conn, err := net.DialUDP("udp", nil, addr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	_, _ = conn.Write([]byte("tender-discovery:" + p2p.addr))
+	return nil
+}
+
+func (p2p *P2PNode) allowDial(target string) bool {
+	p2p.backoffMu.Lock()
+	defer p2p.backoffMu.Unlock()
+	if p2p.dialBackoff == nil {
+		p2p.dialBackoff = make(map[string]time.Time)
+	}
+	next, ok := p2p.dialBackoff[target]
+	if !ok {
+		return true
+	}
+	return time.Now().After(next)
+}
+
+func (p2p *P2PNode) recordDialFailure(target string) {
+	p2p.backoffMu.Lock()
+	defer p2p.backoffMu.Unlock()
+	if p2p.dialBackoff == nil {
+		p2p.dialBackoff = make(map[string]time.Time)
+	}
+	backoff := 1 * time.Second
+	if prev, ok := p2p.dialBackoff[target]; ok {
+		if d := time.Since(prev); d < 30*time.Second {
+			backoff = d * 2
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+		}
+	}
+	p2p.dialBackoff[target] = time.Now().Add(backoff)
+}
+
+func (p2p *P2PNode) isConnAlive(c net.Conn) bool {
+	if c == nil {
+		return false
+	}
+	_ = c.SetReadDeadline(time.Now().Add(1 * time.Second))
+	_, err := c.Read(make([]byte, 0))
+	_ = c.SetReadDeadline(time.Time{})
+	return err == nil
+}
+
+func (p2p *P2PNode) ensurePeerConn(target string) (net.Conn, *bufio.Writer, error) {
+	p2p.peerMu.Lock()
+	if c, ok := p2p.peerConns[target]; ok && p2p.isConnAlive(c) {
+		w := p2p.peerWriters[target]
+		p2p.peerMu.Unlock()
+		return c, w, nil
+	}
+	p2p.cleanupPeerLocked(target)
+	p2p.peerMu.Unlock()
+
+	if !p2p.allowDial(target) {
+		return nil, nil, net.ErrClosed
+	}
+
+	conn, err := net.DialTimeout("tcp", target, 3*time.Second)
+	if err != nil {
+		p2p.recordDialFailure(target)
+		return nil, nil, err
+	}
+	_ = conn.SetDeadline(time.Time{})
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetKeepAlive(true)
+		_ = tcp.SetKeepAlivePeriod(30 * time.Second)
+	}
+
+	w := bufio.NewWriter(conn)
+	p2p.peerMu.Lock()
+	p2p.peerConns[target] = conn
+	p2p.peerWriters[target] = w
+	p2p.peerMu.Unlock()
+
+	return conn, w, nil
+}
+
+func (p2p *P2PNode) cleanupPeerLocked(target string) {
+	if c, ok := p2p.peerConns[target]; ok && c != nil {
+		_ = c.Close()
+	}
+	delete(p2p.peerConns, target)
+	delete(p2p.peerWriters, target)
+}
+
+func (p2p *P2PNode) writePeer(target string, payload []byte) error {
+	_, w, err := p2p.ensurePeerConn(target)
+	if err != nil {
+		p2p.peerMu.Lock()
+		p2p.cleanupPeerLocked(target)
+		p2p.peerMu.Unlock()
+		return err
+	}
+	if _, err := w.Write(append(payload, '\n')); err != nil {
+		p2p.peerMu.Lock()
+		p2p.cleanupPeerLocked(target)
+		p2p.peerMu.Unlock()
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		p2p.peerMu.Lock()
+		p2p.cleanupPeerLocked(target)
+		p2p.peerMu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (p2p *P2PNode) seenMessageID(id string) bool {
+	if id == "" {
+		return false
+	}
+	p2p.peerMu.Lock()
+	defer p2p.peerMu.Unlock()
+	if p2p.seenMsgIDs == nil {
+		p2p.seenMsgIDs = make(map[string]time.Time)
+	}
+	if _, ok := p2p.seenMsgIDs[id]; ok {
+		return true
+	}
+	p2p.seenMsgIDs[id] = time.Now()
+	if len(p2p.seenMsgIDs) > 4096 {
+		cut := time.Now().Add(-10 * time.Minute)
+		for k, v := range p2p.seenMsgIDs {
+			if v.Before(cut) {
+				delete(p2p.seenMsgIDs, k)
+			}
+		}
+	}
+	return false
+}
+
+func mustMarshal(msg p2pMessage) []byte {
+	payload, _ := json.Marshal(msg)
+	return payload
 }
 
 func (p2p *P2PNode) handleConn(conn net.Conn) {
@@ -1888,6 +2042,9 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 			log.Printf("{\"event\":\"p2p_decode\",\"error\":\"%v\"}", err)
 			return
 		}
+		if msg.StreamID != "" && p2p.seenMessageID(msg.StreamID) {
+			continue
+		}
 		if msg.Type == "block" && msg.Block != nil {
 			p2p.chain.mu.Lock()
 			if len(msg.Chain) > 0 {
@@ -1901,32 +2058,28 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 				_ = p2p.chain.saveToDisk()
 			}
 			p2p.chain.mu.Unlock()
-			relayPayload, _ := json.Marshal(msg)
+			relayPayload := mustMarshal(msg)
 			for _, peer := range p2p.peers {
 				if peer == "" || peer == p2p.addr || peer == remote || !p2p.trustedPeers[peer] {
 					continue
 				}
-				relayConn, err := net.DialTimeout("tcp", peer, 3*time.Second)
-				if err != nil {
+				if msg.StreamID != "" && p2p.seenMessageID(msg.StreamID) {
 					continue
 				}
-				_, _ = relayConn.Write(append(relayPayload, '\n'))
-				relayConn.Close()
+				_ = p2p.writePeer(peer, relayPayload)
 			}
 		}
 		if msg.Type == "tx" && msg.Tx != nil {
 			p2p.chain.EnqueueTransaction(*msg.Tx)
-			relayPayload, _ := json.Marshal(msg)
+			relayPayload := mustMarshal(msg)
 			for _, peer := range p2p.peers {
 				if peer == "" || peer == p2p.addr || peer == remote || !p2p.trustedPeers[peer] {
 					continue
 				}
-				relayConn, err := net.DialTimeout("tcp", peer, 3*time.Second)
-				if err != nil {
+				if msg.StreamID != "" && p2p.seenMessageID(msg.StreamID) {
 					continue
 				}
-				_, _ = relayConn.Write(append(relayPayload, '\n'))
-				relayConn.Close()
+				_ = p2p.writePeer(peer, relayPayload)
 			}
 		}
 		if msg.Type == "hello" && msg.Peer != nil {
@@ -1943,37 +2096,21 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 }
 
 func (p2p *P2PNode) broadcastTransaction(tx Transaction) {
-	msg := p2pMessage{Type: "tx", Tx: &tx}
-	payload, _ := json.Marshal(msg)
-	for _, peer := range p2p.peers {
-		if peer == "" || peer == p2p.addr || !p2p.trustedPeers[peer] {
-			continue
-		}
-		conn, err := net.DialTimeout("tcp", peer, 3*time.Second)
-		if err != nil {
-			log.Printf("{\"event\":\"broadcast_tx\",\"peer\":\"%s\",\"error\":\"%v\"}", peer, err)
-			continue
-		}
-		_, _ = conn.Write(append(payload, '\n'))
-		conn.Close()
-	}
+	p2p.broadcastMessage(p2pMessage{Type: "tx", Tx: &tx})
 }
 
 func (p2p *P2PNode) broadcastBlock(block *Block) {
-	msg := p2pMessage{Type: "block", Block: block}
-	payload, _ := json.Marshal(msg)
-	p2p.peers = append(p2p.peers, p2p.addr)
+	p2p.broadcastMessage(p2pMessage{Type: "block", Block: block})
+}
+
+func (p2p *P2PNode) broadcastMessage(msg p2pMessage) {
+	msg.StreamID = fmt.Sprintf("%d-%d", time.Now().UnixNano(), len(p2p.peers))
+	payload := mustMarshal(msg)
 	for _, peer := range p2p.peers {
 		if peer == "" || peer == p2p.addr || !p2p.trustedPeers[peer] {
 			continue
 		}
-		conn, err := net.Dial("tcp", peer)
-		if err != nil {
-			log.Printf("{\"event\":\"broadcast\",\"peer\":\"%s\",\"error\":\"%v\"}", peer, err)
-			continue
-		}
-		_, _ = conn.Write(append(payload, '\n'))
-		conn.Close()
+		_ = p2p.writePeer(peer, payload)
 	}
 }
 
