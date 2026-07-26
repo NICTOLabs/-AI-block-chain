@@ -285,6 +285,12 @@ func (bc *Blockchain) saveToDisk() error {
 	return os.WriteFile(path, payload, 0o644)
 }
 
+func (bc *Blockchain) saveToDiskSafe() error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	return bc.saveToDisk()
+}
+
 func (bc *Blockchain) loadFromDisk() error {
 	path := filepath.Join(bc.DataDir, "chain.json")
 	payload, err := os.ReadFile(path)
@@ -563,10 +569,6 @@ func (bc *Blockchain) Burn(amount uint64) {
 		amount = bc.TokenSupply
 	}
 	bc.TokenSupply -= amount
-}
-
-func (bc *Blockchain) GetMaxSupply() uint64 {
-	return MaxSupply
 }
 
 func BlockReward(blockHeight uint64) uint64 {
@@ -1314,7 +1316,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			return
 		}
 		chain.EnqueueTransaction(tx)
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		p2p.broadcastTransaction(tx)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(tx)
@@ -1386,7 +1388,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "registered"})
 	})
@@ -1425,7 +1427,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			return
 		}
 		chain.Stake(payload.Address, payload.Amount)
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": payload.Amount})
 	})
@@ -1433,7 +1435,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		wallet := blockchain.NewWallet()
 		address := wallet.Address()
 		chain.AddAccount(address, 1000, false)
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": address, "public_key": hex.EncodeToString(wallet.PublicKey)})
 	})
@@ -1455,7 +1457,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(wallet)
 	})
@@ -1527,7 +1529,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			Timestamp:  time.Now().UnixNano(),
 		}
 		chain.EnqueueTransaction(tx)
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		p2p.broadcastTransaction(tx)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "queued", "to": toAddr, "to_label": payload.ToLabel, "amount": payload.Amount})
@@ -1551,7 +1553,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			return
 		}
 		chain.EnqueueTransaction(payload)
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		p2p.broadcastTransaction(payload)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(payload)
@@ -1604,7 +1606,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			amount = 1000
 		}
 		chain.AddAccount(payload.Address, amount, false)
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		chain.mu.RLock()
 		balance := uint64(0)
 		if acct := chain.Ledger[payload.Address]; acct != nil {
@@ -1640,7 +1642,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		chain.addAccountLocked(payload.Address, payload.Amount, false)
 		chain.TokenSupply += payload.Amount
 		chain.mu.Unlock()
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": payload.Amount, "status": "minted"})
 	})
@@ -1664,7 +1666,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(escrow)
 	})
@@ -1682,7 +1684,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			return
 		}
 		proposal := chain.CreateProposal(payload.Title, payload.Description)
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(proposal)
 	})
@@ -1707,7 +1709,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(agreement)
 	})
@@ -1729,7 +1731,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		_ = chain.saveToDisk()
+		_ = chain.saveToDiskSafe()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(meter)
 	})
