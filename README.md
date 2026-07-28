@@ -296,6 +296,29 @@ Join us in creating a world where every agent can participate in the economy, ev
 
 ---
 
+## A Message from Nicto Labs
+
+From Nicto Labs to all of you in the world, from me, Steven Wahoga, the CEO of Nicto Labs from KENYA: this is a gift that we give to you open-handedly. We want you to enjoy it, even though we are currently facing some challenges deploying it.
+
+We need some help from experts who are willing to help us here at Nicto Labs so that we can deploy this to go viral. Currently, our testing and benchmarking are showing great performance, proving that Tender is really the future.
+
+The main challenge we are facing is deploying this blockchain to go viral so that people can start investing in it, and so we can show you that Tender is indeed the future.
+
+If you want to reach us, you can find us on our social accounts:
+- Instagram: [@nictolabs](https://instagram.com/nictolabs)
+- X: [@the_ai_masters](https://x.com/the_ai_masters)
+
+To contact the CEO directly, you can reach his personal Instagram account:
+- Instagram: [@fancy_kadot](https://instagram.com/fancy_kadot)
+
+We currently need help. Please reach out and communicate with us so we can let you know where we need assistance. We ask for your support and show our deepest gratitude to all of you who believe that Tender is the future.
+
+All thanks to all of you from Nicto Labs.
+
+Steve, adios.
+
+---
+
 ## License
 
 See [LICENSE](LICENSE) for details.
