@@ -1,0 +1,45 @@
+name: Security Concern
+description: Report a security concern or policy violation
+title: "[SECURITY CONCERN] "
+labels: ["security", "concern"]
+assignees: ''
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to report security concerns, unauthorized access, or policy violations.
+
+        **Note**: This project is proprietary software owned by NICTOLabs. All rights reserved.
+
+  - type: input
+    id: contact
+    attributes:
+      label: Contact Details
+      description: How can we get in touch with you?
+      placeholder: email@example.com
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Security Concern Description
+      description: Describe the security concern
+      placeholder: Describe the concern...
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Provide any evidence or supporting information
+      placeholder: Provide evidence...
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Potential Impact
+      description: What is the potential impact?
+      placeholder: Describe impact...

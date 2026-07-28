@@ -1,0 +1,31 @@
+name: General Inquiry
+description: General questions or inquiries about TENDER
+title: "[INQUIRY] "
+labels: ["inquiry"]
+assignees: ''
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for your interest in TENDER. Please use this template for general inquiries.
+
+        **Note**: This project is proprietary software owned by NICTOLabs. All rights reserved.
+
+  - type: input
+    id: contact
+    attributes:
+      label: Contact Details
+      description: How can we get in touch with you?
+      placeholder: email@example.com
+    validations:
+      required: true
+
+  - type: textarea
+    id: inquiry
+    attributes:
+      label: Inquiry
+      description: Your question or inquiry
+      placeholder: Ask your question here...
+    validations:
+      required: true
