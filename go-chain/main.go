@@ -33,6 +33,9 @@ const (
 	RegisterModel  TransactionType = blockchain.RegisterModel
 	UpdateModel    TransactionType = blockchain.UpdateModel
 	PurchaseApiKey TransactionType = blockchain.PurchaseApiKey
+	RequestReversal TransactionType = blockchain.RequestReversal
+	ConfirmReversal TransactionType = blockchain.ConfirmReversal
+	CommitReversal  TransactionType = blockchain.CommitReversal
 )
 
 const (
@@ -115,6 +118,8 @@ type Blockchain struct {
 	MintPaused      bool
 	MintPauseUntil  int64
 	AgentTxCount uint64
+	PendingReversals map[string]blockchain.PendingReversal
+	IrreversibleTxs map[string]struct{}
 	metrics      *serverMetrics
 }
 
@@ -208,7 +213,7 @@ type nodeState struct {
 	Chain       []Block                        `json:"chain"`
 	Pending     []Transaction                  `json:"pending"`
 	Ledger      map[string]*Account            `json:"ledger"`
-	Registry    map[string]ModelRef          `json:"registry"`
+	Registry    map[string]ModelRef            `json:"registry"`
 	Consensus   string                         `json:"consensus"`
 	Authorities []string                       `json:"authorities"`
 	TokenSupply uint64                         `json:"token_supply"`
@@ -220,6 +225,8 @@ type nodeState struct {
 	SeenTxIDs   map[string]struct{}            `json:"seen_tx_ids"`
 	AuditTrail  []AuditEntry                   `json:"audit_trail"`
 	NextNonce   map[string]uint64              `json:"next_nonce"`
+	PendingReversals map[string]blockchain.PendingReversal `json:"pending_reversals"`
+	IrreversibleTxs map[string]struct{}        `json:"irreversible_txs"`
 }
 
 type p2pMessage struct {
@@ -324,6 +331,8 @@ func (bc *Blockchain) saveToDisk() error {
 		SeenTxIDs:   bc.SeenTxIDs,
 		AuditTrail:  bc.AuditTrail,
 		NextNonce:   bc.NextNonce,
+		PendingReversals: bc.PendingReversals,
+		IrreversibleTxs: bc.IrreversibleTxs,
 	}
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -363,6 +372,8 @@ func (bc *Blockchain) loadFromDisk() error {
 	bc.SeenTxIDs = state.SeenTxIDs
 	bc.AuditTrail = state.AuditTrail
 	bc.NextNonce = state.NextNonce
+	bc.PendingReversals = state.PendingReversals
+	bc.IrreversibleTxs = state.IrreversibleTxs
 	bc.Wallets = make(map[string]ManagedWallet)
 	if bc.UsedNonces == nil {
 		bc.UsedNonces = make(map[string]map[uint64]struct{})
@@ -606,6 +617,126 @@ func isAITransaction(txType TransactionType) bool {
 	return false
 }
 
+func validateRequestReversal(bc *Blockchain, tx Transaction) bool {
+	if tx.Amount == 0 || tx.Payload == "" {
+		return false
+	}
+	if _, irreversible := bc.IrreversibleTxs[tx.Payload]; irreversible {
+		return false
+	}
+	original, exists := bc.findOriginalTransaction(tx.Payload)
+	if !exists {
+		return false
+	}
+	if original.From != tx.From || original.To != tx.To || original.Amount != tx.Amount {
+		return false
+	}
+	if original.TxType != Transfer {
+		return false
+	}
+	receiver, receiverExists := bc.Ledger[tx.To]
+	if !receiverExists {
+		return false
+	}
+	if receiver.Balance < tx.Amount {
+		return false
+	}
+	if _, pending := bc.PendingReversals[tx.Payload]; pending {
+		return false
+	}
+	return true
+}
+
+func validateConfirmReversal(bc *Blockchain, tx Transaction) bool {
+	if tx.Payload == "" {
+		return false
+	}
+	reversal, exists := bc.PendingReversals[tx.Payload]
+	if !exists {
+		return false
+	}
+	if reversal.Status != "requested" {
+		return false
+	}
+	if reversal.To != tx.From {
+		return false
+	}
+	return true
+}
+
+func validateCommitReversal(bc *Blockchain, tx Transaction) bool {
+	if tx.Payload == "" {
+		return false
+	}
+	reversal, exists := bc.PendingReversals[tx.Payload]
+	if !exists {
+		return false
+	}
+	if reversal.Status != "confirmed" {
+		return false
+	}
+	if reversal.From != tx.From && reversal.To != tx.From {
+		return false
+	}
+	return true
+}
+
+func (bc *Blockchain) findOriginalTransaction(txID string) (Transaction, bool) {
+	for _, b := range bc.Chain {
+		for _, tx := range b.Transactions {
+			if tx.ID == txID {
+				return tx, true
+			}
+		}
+	}
+	return Transaction{}, false
+}
+
+func (bc *Blockchain) ProcessReversals(block Block) {
+	for _, tx := range block.Transactions {
+		switch tx.TxType {
+		case RequestReversal:
+			if _, exists := bc.PendingReversals[tx.Payload]; !exists {
+				bc.PendingReversals[tx.Payload] = blockchain.PendingReversal{
+					ID: tx.ID,
+					OriginalTxID: tx.Payload,
+					From: tx.From,
+					To: tx.To,
+					Amount: tx.Amount,
+					Requester: tx.From,
+					Status: "requested",
+					Irreversible: false,
+				}
+				bc.appendAuditEntry("reversal_requested", tx.From, fmt.Sprintf("original_tx=%s amount=%d", tx.Payload, tx.Amount))
+			}
+		case ConfirmReversal:
+			if reversal, exists := bc.PendingReversals[tx.Payload]; exists && reversal.Status == "requested" {
+				reversal.Status = "confirmed"
+				reversal.Confirmer = tx.From
+				bc.PendingReversals[tx.Payload] = reversal
+				bc.appendAuditEntry("reversal_confirmed", tx.From, fmt.Sprintf("original_tx=%s", tx.Payload))
+			}
+		case CommitReversal:
+			if reversal, exists := bc.PendingReversals[tx.Payload]; exists && reversal.Status == "confirmed" {
+				sender := bc.Ledger[reversal.From]
+				receiver := bc.Ledger[reversal.To]
+				if sender != nil && receiver != nil && receiver.Balance >= reversal.Amount {
+					receiver.Balance -= reversal.Amount
+					sender.Balance += reversal.Amount
+					delete(bc.PendingReversals, tx.Payload)
+					bc.appendAuditEntry("reversal_committed", tx.From, fmt.Sprintf("original_tx=%s amount=%d", tx.Payload, reversal.Amount))
+				}
+			}
+		}
+	}
+}
+
+func (bc *Blockchain) MarkIrreversible(txID string) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	bc.IrreversibleTxs[txID] = struct{}{}
+}
+
 func (bc *Blockchain) distributeRewards() {
 	for _, account := range bc.Ledger {
 		if account.Staked > 0 {
@@ -671,9 +802,10 @@ func (bc *Blockchain) CreateEscrow(from, to string, amount uint64, serviceID str
 	}
 	fromAccount.Balance -= amount
 	id := fmt.Sprintf("escrow-%d", time.Now().UnixNano())
-	escrow := Escrow{ID: id, From: from, To: to, Amount: amount, ServiceID: serviceID, Status: "active"}
+	escrow := Escrow{ID: id, From: from, To: to, Amount: amount, ServiceID: serviceID, Status: "active", Irreversible: true}
 	bc.Escrows[id] = escrow
-	bc.appendAuditEntry("escrow_created", from, fmt.Sprintf("to=%s amount=%d service_id=%s", to, amount, serviceID))
+	bc.IrreversibleTxs[id] = struct{}{}
+	bc.appendAuditEntry("escrow_created", from, fmt.Sprintf("to=%s amount=%d service_id=%s irreversible=true", to, amount, serviceID))
 	return escrow, nil
 }
 
@@ -1093,6 +1225,12 @@ func (bc *Blockchain) validateTransaction(tx Transaction) bool {
 	case PurchaseApiKey:
 		entry, exists := bc.Registry[tx.To]
 		return exists && sender.Balance >= tx.Amount && entry.Active
+	case RequestReversal:
+		return validateRequestReversal(bc, tx)
+	case ConfirmReversal:
+		return validateConfirmReversal(bc, tx)
+	case CommitReversal:
+		return validateCommitReversal(bc, tx)
 	default:
 		return false
 	}
@@ -1176,6 +1314,7 @@ func (bc *Blockchain) applyBlock(block Block) {
 			}
 		}
 	}
+	bc.ProcessReversals(block)
 }
 
 func (bc *Blockchain) CreateServiceAgreement(provider, consumer, modelID string, pricePerCall, maxCalls uint64) (ServiceAgreement, error) {

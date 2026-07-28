@@ -64,6 +64,8 @@ type Blockchain struct {
 	FinalitySignatures map[uint64][]FinalityVoteSignature
 	MinerStats      map[string]*MinerStats
 	UniversalWallets map[string]UniversalWallet
+	PendingReversals map[string]PendingReversal
+	IrreversibleTxs map[string]struct{}
 	tendermintEngine *TendermintEngine
 	metrics         *serverMetrics
 }
@@ -98,7 +100,8 @@ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blo
 		AgentTxCount:    0,
 		MinerStats:      make(map[string]*MinerStats),
 		UniversalWallets: make(map[string]UniversalWallet),
-		tendermintEngine: NewTendermintEngine([]string{}),
+		PendingReversals: make(map[string]PendingReversal),
+		IrreversibleTxs: make(map[string]struct{}),
 		metrics:         &serverMetrics{},
 	}
 	bc.createGenesisBlock()
@@ -155,6 +158,8 @@ func (bc *Blockchain) SaveToDisk() error {
 		MintPauseUntil:  bc.MintPauseUntil,
 		UniversalWallets: bc.UniversalWallets,
 		FinalitySignatures: bc.FinalitySignatures,
+		PendingReversals: bc.PendingReversals,
+		IrreversibleTxs: bc.IrreversibleTxs,
 	}
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -199,6 +204,8 @@ func (bc *Blockchain) LoadFromDisk() error {
 	bc.MintPauseUntil = state.MintPauseUntil
 	bc.UniversalWallets = state.UniversalWallets
 	bc.FinalitySignatures = state.FinalitySignatures
+	bc.PendingReversals = state.PendingReversals
+	bc.IrreversibleTxs = state.IrreversibleTxs
 	for from, nonceMap := range bc.UsedNonces {
 		maxNonce := uint64(0)
 		for nonce := range nonceMap {
@@ -451,6 +458,126 @@ func isAITransaction(txType TransactionType) bool {
 	return false
 }
 
+func validateRequestReversal(bc *Blockchain, tx Transaction) bool {
+	if tx.Amount == 0 || tx.Payload == "" {
+		return false
+	}
+	if _, irreversible := bc.IrreversibleTxs[tx.Payload]; irreversible {
+		return false
+	}
+	original, exists := bc.findOriginalTransaction(tx.Payload)
+	if !exists {
+		return false
+	}
+	if original.From != tx.From || original.To != tx.To || original.Amount != tx.Amount {
+		return false
+	}
+	if original.TxType != Transfer {
+		return false
+	}
+	receiver, receiverExists := bc.Ledger[tx.To]
+	if !receiverExists {
+		return false
+	}
+	if receiver.Balance < tx.Amount {
+		return false
+	}
+	if _, pending := bc.PendingReversals[tx.Payload]; pending {
+		return false
+	}
+	return true
+}
+
+func validateConfirmReversal(bc *Blockchain, tx Transaction) bool {
+	if tx.Payload == "" {
+		return false
+	}
+	reversal, exists := bc.PendingReversals[tx.Payload]
+	if !exists {
+		return false
+	}
+	if reversal.Status != "requested" {
+		return false
+	}
+	if reversal.To != tx.From {
+		return false
+	}
+	return true
+}
+
+func validateCommitReversal(bc *Blockchain, tx Transaction) bool {
+	if tx.Payload == "" {
+		return false
+	}
+	reversal, exists := bc.PendingReversals[tx.Payload]
+	if !exists {
+		return false
+	}
+	if reversal.Status != "confirmed" {
+		return false
+	}
+	if reversal.From != tx.From && reversal.To != tx.From {
+		return false
+	}
+	return true
+}
+
+func (bc *Blockchain) findOriginalTransaction(txID string) (Transaction, bool) {
+	for _, b := range bc.Chain {
+		for _, tx := range b.Transactions {
+			if tx.ID == txID {
+				return tx, true
+			}
+		}
+	}
+	return Transaction{}, false
+}
+
+func (bc *Blockchain) ProcessReversals(block Block) {
+	for _, tx := range block.Transactions {
+		switch tx.TxType {
+		case RequestReversal:
+			if _, exists := bc.PendingReversals[tx.Payload]; !exists {
+				bc.PendingReversals[tx.Payload] = PendingReversal{
+					ID: tx.ID,
+					OriginalTxID: tx.Payload,
+					From: tx.From,
+					To: tx.To,
+					Amount: tx.Amount,
+					Requester: tx.From,
+					Status: "requested",
+					Irreversible: false,
+				}
+				bc.appendAuditEntry("reversal_requested", tx.From, fmt.Sprintf("original_tx=%s amount=%d", tx.Payload, tx.Amount))
+			}
+		case ConfirmReversal:
+			if reversal, exists := bc.PendingReversals[tx.Payload]; exists && reversal.Status == "requested" {
+				reversal.Status = "confirmed"
+				reversal.Confirmer = tx.From
+				bc.PendingReversals[tx.Payload] = reversal
+				bc.appendAuditEntry("reversal_confirmed", tx.From, fmt.Sprintf("original_tx=%s", tx.Payload))
+			}
+		case CommitReversal:
+			if reversal, exists := bc.PendingReversals[tx.Payload]; exists && reversal.Status == "confirmed" {
+				sender := bc.Ledger[reversal.From]
+				receiver := bc.Ledger[reversal.To]
+				if sender != nil && receiver != nil && receiver.Balance >= reversal.Amount {
+					receiver.Balance -= reversal.Amount
+					sender.Balance += reversal.Amount
+					delete(bc.PendingReversals, tx.Payload)
+					bc.appendAuditEntry("reversal_committed", tx.From, fmt.Sprintf("original_tx=%s amount=%d", tx.Payload, reversal.Amount))
+				}
+			}
+		}
+	}
+}
+
+func (bc *Blockchain) MarkIrreversible(txID string) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	bc.IrreversibleTxs[txID] = struct{}{}
+}
+
 
 func (bc *Blockchain) DistributeRewards() {
 	bc.mu.Lock()
@@ -557,9 +684,10 @@ func (bc *Blockchain) CreateEscrow(from, to string, amount uint64, serviceID str
 	}
 	fromAccount.Balance -= amount
 	id := fmt.Sprintf("escrow-%d", time.Now().UnixNano())
-	escrow := Escrow{ID: id, From: from, To: to, Amount: amount, ServiceID: serviceID, Status: "active"}
+	escrow := Escrow{ID: id, From: from, To: to, Amount: amount, ServiceID: serviceID, Status: "active", Irreversible: true}
 	bc.Escrows[id] = escrow
-	bc.appendAuditEntry("escrow_created", from, fmt.Sprintf("to=%s amount=%d service_id=%s", to, amount, serviceID))
+	bc.IrreversibleTxs[id] = struct{}{}
+	bc.appendAuditEntry("escrow_created", from, fmt.Sprintf("to=%s amount=%d service_id=%s irreversible=true", to, amount, serviceID))
 	return escrow, nil
 }
 
@@ -976,6 +1104,12 @@ func (bc *Blockchain) validateTransaction(tx Transaction) bool {
 	case PurchaseApiKey:
 		entry, exists := bc.Registry[tx.To]
 		return exists && sender.Balance >= tx.Amount && entry.Active
+	case RequestReversal:
+		return validateRequestReversal(bc, tx)
+	case ConfirmReversal:
+		return validateConfirmReversal(bc, tx)
+	case CommitReversal:
+		return validateCommitReversal(bc, tx)
 	default:
 		return false
 	}
@@ -1058,6 +1192,7 @@ func (bc *Blockchain) applyBlock(block Block) {
 			bc.AgentTxCount++
 		}
 	}
+	bc.ProcessReversals(block)
 }
 
 func (bc *Blockchain) CreateServiceAgreement(provider, consumer, modelID string, pricePerCall, maxCalls uint64) (ServiceAgreement, error) {

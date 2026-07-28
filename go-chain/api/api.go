@@ -869,6 +869,83 @@ func StartAPI(chain *blockchain.Blockchain, port int, p2pNode *p2p.P2PNode, cfg 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(escrow)
 	})
+	mux.HandleFunc("/api/reversals/request", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			From    string `json:"from"`
+			To      string `json:"to"`
+			Amount  uint64 `json:"amount"`
+			OriginalTxID string `json:"original_tx_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		tx := blockchain.Transaction{
+			From:    payload.From,
+			To:      payload.To,
+			Amount:  payload.Amount,
+			TxType:  blockchain.RequestReversal,
+			Payload: payload.OriginalTxID,
+		}
+		chain.EnqueueTransaction(tx)
+		_ = chain.SaveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "reversal_requested", "original_tx": payload.OriginalTxID})
+	})
+	mux.HandleFunc("/api/reversals/confirm", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			From        string `json:"from"`
+			OriginalTxID string `json:"original_tx_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		tx := blockchain.Transaction{
+			From:    payload.From,
+			To:      payload.From,
+			Amount:  0,
+			TxType:  blockchain.ConfirmReversal,
+			Payload: payload.OriginalTxID,
+		}
+		chain.EnqueueTransaction(tx)
+		_ = chain.SaveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "reversal_confirmed", "original_tx": payload.OriginalTxID})
+	})
+	mux.HandleFunc("/api/reversals/commit", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			From        string `json:"from"`
+			OriginalTxID string `json:"original_tx_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		tx := blockchain.Transaction{
+			From:    payload.From,
+			To:      payload.From,
+			Amount:  0,
+			TxType:  blockchain.CommitReversal,
+			Payload: payload.OriginalTxID,
+		}
+		chain.EnqueueTransaction(tx)
+		_ = chain.SaveToDisk()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "reversal_committed", "original_tx": payload.OriginalTxID})
+	})
 	mux.HandleFunc("/api/proposals", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

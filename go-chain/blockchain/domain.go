@@ -21,10 +21,13 @@ import (
 type TransactionType string
 
 const (
-	Transfer       TransactionType = "TRANSFER"
-	RegisterModel  TransactionType = "REGISTER_MODEL"
-	UpdateModel    TransactionType = "UPDATE_MODEL"
-	PurchaseApiKey TransactionType = "PURCHASE_API_KEY"
+	Transfer         TransactionType = "TRANSFER"
+	RegisterModel    TransactionType = "REGISTER_MODEL"
+	UpdateModel      TransactionType = "UPDATE_MODEL"
+	PurchaseApiKey   TransactionType = "PURCHASE_API_KEY"
+	RequestReversal  TransactionType = "REQUEST_REVERSAL"
+	ConfirmReversal  TransactionType = "CONFIRM_REVERSAL"
+	CommitReversal   TransactionType = "COMMIT_REVERSAL"
 )
 
 type Transaction struct {
@@ -111,6 +114,19 @@ type Escrow struct {
 	Amount    uint64 `json:"amount"`
 	ServiceID string `json:"service_id"`
 	Status    string `json:"status"`
+	Irreversible bool `json:"irreversible,omitempty"`
+}
+
+type PendingReversal struct {
+	ID            string `json:"id"`
+	OriginalTxID  string `json:"original_tx_id"`
+	From          string `json:"from"`
+	To            string `json:"to"`
+	Amount        uint64 `json:"amount"`
+	Requester     string `json:"requester"`
+	Confirmer     string `json:"confirmer"`
+	Status        string `json:"status"`
+	Irreversible  bool   `json:"irreversible"`
 }
 
 type GovernanceProposal struct {
@@ -287,6 +303,8 @@ type nodeState struct {
 	MintPauseUntil  int64                          `json:"mint_pause_until"`
 	UniversalWallets map[string]UniversalWallet   `json:"universal_wallets"`
 	FinalitySignatures map[uint64][]FinalityVoteSignature `json:"finality_signatures"`
+	PendingReversals map[string]PendingReversal   `json:"pending_reversals"`
+	IrreversibleTxs map[string]struct{}           `json:"irreversible_txs"`
 }
 
 type Snapshot struct {
