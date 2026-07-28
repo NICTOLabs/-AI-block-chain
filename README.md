@@ -342,7 +342,7 @@ The main challenge we are facing is deploying this blockchain to go viral so tha
 
 If you want to reach us, you can find us on our social accounts:
 - Instagram: [@nictolabs](https://instagram.com/nictolabs)
-- X: [@the_ai_masters](https://x.com/the_ai_masters)
+- X: [@WahogoStephen](https://x.com/WahogoStephe)
 
 To contact the CEO directly, you can reach his personal Instagram account:
 - Instagram: [@fancy_kadot](https://instagram.com/fancy_kadot)
