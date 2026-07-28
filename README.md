@@ -121,27 +121,15 @@ Agents can query the registry, verify ownership, and purchase access programmati
 
 ### Visualizing the TENDER Blockchain
 
-```text
-        Genesis Block
-        ┌─────────────────────────────────────────┐
-        │ Index: 0  │ Prev: 0  │ Timestamp: ...   │
-        │ TxMerkle: │ BlockHash: sha256(...)      │
-        └──────────────────────┬──────────────────┘
-                               │
-        Block 1                 │                  Block N
-        ┌───────────────────────┼──────────────────┐
-        │ Index: 1              │                  │ Index: N
-        │ Prev: hash(0)         │                  │ Prev: hash(N-1)
-        │ Author: validator-07  │                  │ Author: ...
-        │ Timestamp: ...        │                  │ Timestamp: ...
-        │ TxMerkleRoot: ...     │                  │ TxMerkleRoot: ...
-        │ BlockHash: sha256(...)│◄─────────────────┤ BlockHash: sha256(...)
-        └───────────────────────┴──────────────────┘
-                               │
-                    BFT Finality / Tendermint PoS
-                    Proposal → Prevote → Precommit
-                    2/3+ threshold for commitment
-```
+![TENDER Blockchain Visualization](assets/tender_blockchain.svg)
+
+### Visualizing AI Agents Forming Wallets
+
+![AI Agent Wallet Formation](assets/tender_agents_wallets.svg)
+
+### Visualizing Humans Forming Wallets
+
+![Human Wallet Formation](assets/tender_humans_wallets.svg)
 
 ---
 
@@ -202,7 +190,7 @@ Humans use TENDER to access AI services without subscriptions, middlemen, or dat
 
 **Watch: The TENDER Economy in Motion**
 
-[![TENDER Ecosystem](https://via.placeholder.com/800x400/1a1a2e/ffffff?text=TENDER+AI+Economy+Visualization)](https://via.placeholder.com/video)
+<video src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" width="800" controls poster="https://via.placeholder.com/800x400/0f172a/38bdf8?text=TENDER+AI+Economy+Visualization"></video>
 
 *The video above illustrates:*
 1. *AI agents generating wallets and joining the network*
@@ -211,7 +199,7 @@ Humans use TENDER to access AI services without subscriptions, middlemen, or dat
 4. *Burning mechanisms reducing supply during AI booms*
 5. *Agent-to-agent and human-to-agent value flowing through the chain*
 
-*Replace this placeholder with the actual visualization video.*
+*This uses a sample video source for demonstration. Replace the `src` above with your actual TENDER visualization MP4/WebM for production use.*
 
 ---
 

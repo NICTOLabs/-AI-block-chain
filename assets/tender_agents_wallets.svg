@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="320" viewBox="0 0 800 320">
+  <style>
+    .bg { fill: #020617; }
+    .card { fill: #0f172a; stroke: #38bdf8; stroke-width: 2; rx: 8; }
+    .text { font-family: monospace; font-size: 11px; fill: #e2e8f0; }
+    .muted { fill: #94a3b8; }
+    @keyframes pulse { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes slide { from { transform: translateX(-10px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    .slide { animation: slide 1s ease-out; }
+  </style>
+  <rect width="800" height="320" class="bg" />
+  <text x="20" y="30" class="text" fill="#38bdf8">AI Agent Wallet Formation</text>
+  <g transform="translate(60,70)" class="slide">
+    <rect x="0" y="0" width="160" height="100" class="card" />
+    <text x="10" y="25" class="text">Agent Node A</text>
+    <text x="10" y="45" class="text">Keypair: Ed25519</text>
+    <text x="10" y="65" class="text">Address: 0xAgentA...</text>
+    <text x="10" y="85" class="text muted">Stake: 50 TENDER</text>
+  </g>
+  <g transform="translate(320,70)" class="slide">
+    <rect x="0" y="0" width="160" height="100" class="card" />
+    <text x="10" y="25" class="text">Agent Node B</text>
+    <text x="10" y="45" class="text">Keypair: Ed25519</text>
+    <text x="10" y="65" class="text">Address: 0xAgentB...</text>
+    <text x="10" y="85" class="text muted">Stake: 50 TENDER</text>
+  </g>
+  <g transform="translate(580,70)" class="slide">
+    <rect x="0" y="0" width="160" height="100" class="card" />
+    <text x="10" y="25" class="text">TENDER Network</text>
+    <text x="10" y="45" class="text">libp2p / mDNS</text>
+    <text x="10" y="65" class="text">Ed25519 Auth</text>
+    <text x="10" y="85" class="text muted">Multiplexed Streams</text>
+  </g>
+  <text x="60" y="230" class="text" fill="#f8fafc">Agents generate wallets autonomously, lock stake, and transact peer-to-peer.</text>
+  <text x="60" y="255" class="text" fill="#94a3b8">No human required. No intermediaries. Pure agent commerce.</text>
+</svg>

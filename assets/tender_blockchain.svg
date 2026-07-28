@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="320" viewBox="0 0 800 320">
+  <style>
+    .block { fill: #0f172a; stroke: #38bdf8; stroke-width: 2; }
+    .text { font-family: monospace; font-size: 11px; fill: #e2e8f0; }
+    .accent { fill: #38bdf8; }
+    .chain { stroke: #94a3b8; stroke-width: 2; marker-end: url(#arrow); }
+    @keyframes dash { to { stroke-dashoffset: -40; } }
+    .chain { stroke-dasharray: 10,10; animation: dash 1s linear infinite; }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#94a3b8" />
+    </marker>
+  </defs>
+  <rect width="800" height="320" fill="#020617" />
+  <text x="20" y="30" class="text" fill="#38bdf8">TENDER Blockchain Visualization</text>
+  <g transform="translate(60,80)">
+    <rect x="0" y="0" width="140" height="90" rx="8" class="block" />
+    <text x="10" y="25" class="text">Genesis</text>
+    <text x="10" y="45" class="text">Index: 0</text>
+    <text x="10" y="65" class="text">Hash: 0x00...</text>
+    <line x1="140" y1="45" x2="200" y2="45" class="chain" />
+  </g>
+  <g transform="translate(260,80)">
+    <rect x="0" y="0" width="140" height="90" rx="8" class="block" />
+    <text x="10" y="25" class="text">Block 1</text>
+    <text x="10" y="45" class="text">Author: validator-01</text>
+    <text x="10" y="65" class="text">TxMerkle: 0x...</text>
+    <line x1="140" y1="45" x2="200" y2="45" class="chain" />
+  </g>
+  <g transform="translate(460,80)">
+    <rect x="0" y="0" width="140" height="90" rx="8" class="block" />
+    <text x="10" y="25" class="text">Block 2</text>
+    <text x="10" y="45" class="text">Author: validator-02</text>
+    <text x="10" y="65" class="text">Finalized: true</text>
+  </g>
+  <text x="80" y="210" class="text" fill="#f8fafc">Tendermint PoS: Proposal → Prevote → Precommit → Commit</text>
+  <text x="80" y="235" class="text" fill="#f8fafc">AI Activity Burns Supply / Treasury Buyback / Model Staking</text>
+  <text x="80" y="260" class="text" fill="#94a3b8">Each block is linked, finalized, and secured by validator consensus.</text>
+</svg>
