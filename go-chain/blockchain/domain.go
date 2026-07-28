@@ -92,8 +92,11 @@ const (
 	BaseFee           uint64 = 5 * HogohogoPerTender
 	FeeMultiplier     uint64 = 2
 	BurnRatePercent   uint64 = 1
+	AIBurnScaling     uint64 = 20
 	RewardRatePercent uint64 = 4
 	MinStake          uint64 = 100 * HogohogoPerTender
+	AIModelStake      uint64 = 50 * HogohogoPerTender
+	AgentMinBalance   uint64 = 10 * HogohogoPerTender
 	SlashPercent      uint64 = 10
 	CurrencyName      string = "TENDER"
 	CurrencySubunit   string = "HOGOHOGO"

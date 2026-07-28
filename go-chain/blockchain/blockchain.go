@@ -436,7 +436,19 @@ func (bc *Blockchain) estimateFee(tx Transaction, congestion int) uint64 {
 			baseFee -= 1
 		}
 	}
+	if isAITransaction(tx.TxType) && bc.AgentTxCount > 0 && bc.TokenSupply > 0 {
+		aiRatio := float64(bc.AgentTxCount) / float64(bc.TokenSupply)
+		baseFee += uint64(aiRatio * 1_000_000_000)
+	}
 	return baseFee
+}
+
+func isAITransaction(txType TransactionType) bool {
+	switch txType {
+	case RegisterModel, UpdateModel, PurchaseApiKey:
+		return true
+	}
+	return false
 }
 
 
@@ -461,9 +473,34 @@ func (bc *Blockchain) Burn(amount uint64) {
 	bc.TokenSupply -= amount
 }
 
+func (bc *Blockchain) treasuryBuybackLocked() {
+	if bc.TokenSupply <= 0 {
+		return
+	}
+	cfAcct := bc.Ledger[CommunityFundAddress]
+	if cfAcct == nil || cfAcct.Balance == 0 {
+		return
+	}
+	burn := cfAcct.Balance / 10
+	if burn > bc.TokenSupply/100 {
+		burn = bc.TokenSupply / 100
+	}
+	if burn > 0 {
+		cfAcct.Balance -= burn
+		bc.TokenSupply -= burn
+		bc.appendAuditEntry("treasury_buyback", CommunityFundAddress, fmt.Sprintf("amount=%d", burn))
+	}
+}
+
 func (bc *Blockchain) RegisterModel(owner, id, version, metadata string, pricePerCall uint64, active bool) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
+	account, ok := bc.Ledger[owner]
+	if !ok || account.Balance < AIModelStake {
+		return
+	}
+	account.Balance -= AIModelStake
+	account.Staked += AIModelStake
 	cid := fmt.Sprintf("%s:%s:%s", id, owner, version)
 	bc.Registry[id] = ModelRef{
 		ID:           id,
@@ -472,14 +509,20 @@ func (bc *Blockchain) RegisterModel(owner, id, version, metadata string, pricePe
 		Active:       active,
 		PricePerCall: pricePerCall,
 	}
-	bc.appendAuditEntry("model_registered", owner, fmt.Sprintf("model_id=%s cid=%s price=%d", id, cid, pricePerCall))
+	bc.appendAuditEntry("model_registered", owner, fmt.Sprintf("model_id=%s cid=%s price=%d stake=%d", id, cid, pricePerCall, AIModelStake))
 	bc.AgentTxCount++
 }
 
 func (bc *Blockchain) UpdateModel(owner, id, version, metadata string, pricePerCall uint64) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	entry := bc.Registry[id]
+	entry, exists := bc.Registry[id]
+	if !exists {
+		return
+	}
+	if account, ok := bc.Ledger[owner]; !ok || account.Staked < AIModelStake {
+		return
+	}
 	cid := fmt.Sprintf("%s:%s:%s", id, owner, version)
 	entry.CID = cid
 	entry.PricePerCall = pricePerCall
@@ -700,17 +743,24 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 				atomic.AddInt64(&bc.metrics.txRejected, 1)
 				continue
 			}
-			if tx.Fee > 0 {
-				totalBurn := tx.Fee * BurnRatePercent / 100
-				permanentBurn := totalBurn * 70 / 100
-				communityFund := totalBurn - permanentBurn
-				bc.TokenSupply -= permanentBurn
-				if cfAcct := bc.Ledger[CommunityFundAddress]; cfAcct != nil {
-					cfAcct.Balance += communityFund
-				} else {
-					bc.Ledger[CommunityFundAddress] = &Account{Address: CommunityFundAddress, Balance: communityFund, Staked: 0, IsAgent: false}
-				}
+		if tx.Fee > 0 {
+			burnRate := BurnRatePercent
+			if isAITransaction(tx.TxType) && bc.AgentTxCount > 0 && bc.TokenSupply > 0 {
+				burnRate += AIBurnScaling
 			}
+			totalBurn := tx.Fee * burnRate / 100
+			permanentBurn := totalBurn * 70 / 100
+			communityFund := totalBurn - permanentBurn
+			if permanentBurn > bc.TokenSupply {
+				permanentBurn = bc.TokenSupply
+			}
+			bc.TokenSupply -= permanentBurn
+			if cfAcct := bc.Ledger[CommunityFundAddress]; cfAcct != nil {
+				cfAcct.Balance += communityFund
+			} else {
+				bc.Ledger[CommunityFundAddress] = &Account{Address: CommunityFundAddress, Balance: communityFund, Staked: 0, IsAgent: false}
+			}
+		}
 			block.Transactions = append(block.Transactions, tx)
 			bc.markTransactionSeen(tx)
 			atomic.AddInt64(&bc.EnsureMetrics().txAccepted, 1)
@@ -725,37 +775,40 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
 		return nil, err
 	}
-	blockReward := bc.MineRewardFor(author)
-	if account := bc.Ledger[author]; account != nil {
-		account.Balance += blockReward
-		bc.TokenSupply += blockReward
-	}
-	bc.applyBlock(block)
-	bc.Chain = append(bc.Chain, block)
-	bc.rotateValidatorKeysLocked(time.Now().Unix())
-	if bc.Consensus != ProofOfWork && bc.tendermintEngine != nil {
-		proposal, _ := bc.tendermintEngine.ProcessProposal(block, author)
-		_ = proposal
-		_, _ = bc.tendermintEngine.Prevote(block.BlockHash)
-		vote, _ := bc.tendermintEngine.Precommit(block.BlockHash)
-		if vote.BlockHash != "" {
-			_ = bc.tendermintEngine.Commit(vote.BlockHash)
-			_ = bc.tendermintEngine.FinalizeBlock(block)
+		blockReward := bc.MineRewardFor(author)
+		if account := bc.Ledger[author]; account != nil {
+			account.Balance += blockReward
+			bc.TokenSupply += blockReward
 		}
-		bc.tendermintEngine.AdvanceHeight()
+		bc.applyBlock(block)
+		bc.Chain = append(bc.Chain, block)
+		bc.rotateValidatorKeysLocked(time.Now().Unix())
+		if bc.Consensus != ProofOfWork && bc.tendermintEngine != nil {
+			proposal, _ := bc.tendermintEngine.ProcessProposal(block, author)
+			_ = proposal
+			_, _ = bc.tendermintEngine.Prevote(block.BlockHash)
+			vote, _ := bc.tendermintEngine.Precommit(block.BlockHash)
+			if vote.BlockHash != "" {
+				_ = bc.tendermintEngine.Commit(vote.BlockHash)
+				_ = bc.tendermintEngine.FinalizeBlock(block)
+			}
+			bc.tendermintEngine.AdvanceHeight()
+		}
+		if bc.AgentTxCount > 0 {
+			bc.treasuryBuybackLocked()
+		}
+		bc.Pending = []Transaction{}
+		bc.adjustDifficulty()
+		bc.RecordMinerSubmission(author)
+		bc.NoteMinedBlock(author)
+		bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d miner=%s reward=%d", block.Index, len(block.Transactions), author, blockReward))
+		atomic.AddInt64(&bc.EnsureMetrics().blocksMined, 1)
+		if err := bc.SaveToDisk(); err != nil {
+			return nil, err
+		}
+		_ = bc.NotifyBridgeRelayer(&block)
+		return &block, nil
 	}
-	bc.Pending = []Transaction{}
-	bc.adjustDifficulty()
-	bc.RecordMinerSubmission(author)
-	bc.NoteMinedBlock(author)
-	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d miner=%s reward=%d", block.Index, len(block.Transactions), author, blockReward))
-	atomic.AddInt64(&bc.EnsureMetrics().blocksMined, 1)
-	if err := bc.SaveToDisk(); err != nil {
-		return nil, err
-	}
-	_ = bc.NotifyBridgeRelayer(&block)
-	return &block, nil
-}
 
 func (bc *Blockchain) SelectValidatorPubKey() string {
 	bc.mu.RLock()
@@ -907,16 +960,19 @@ func (bc *Blockchain) validateTransaction(tx Transaction) bool {
 	if tx.From != tx.To && tx.Amount == 0 {
 		return false
 	}
+	if isAITransaction(tx.TxType) && sender.Balance < AgentMinBalance {
+		return false
+	}
 	switch tx.TxType {
 	case Transfer:
 		_, receiverExists := bc.Ledger[tx.To]
 		return receiverExists && sender.Balance >= tx.Amount
 	case RegisterModel:
 		_, exists := bc.Registry[tx.To]
-		return sender.IsAgent && !exists
+		return sender.IsAgent && !exists && sender.Staked >= AIModelStake
 	case UpdateModel:
 		entry, exists := bc.Registry[tx.To]
-		return exists && entry.Owner == tx.From
+		return exists && entry.Owner == tx.From && sender.Staked >= AIModelStake
 	case PurchaseApiKey:
 		entry, exists := bc.Registry[tx.To]
 		return exists && sender.Balance >= tx.Amount && entry.Active
