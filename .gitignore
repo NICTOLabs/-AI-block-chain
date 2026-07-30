@@ -6,6 +6,9 @@ tender-node
 *.out
 
 # Build artifacts
+vm/build/
+
+# Build artifacts
 target/
 Cargo.lock
 
