@@ -1,12 +1,11 @@
 services:
   - type: web
     name: tender-node
-    env: go
+    env: docker
     plan: free
     region: oregon
     rootDir: go-chain
-    buildCommand: go build -o tender-node .
-    startCommand: ./tender-node -api-port 10000 -p2p-port 3030 -data-dir /data -consensus pos
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: TENDER_API_PORT
         value: "10000"
