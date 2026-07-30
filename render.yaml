@@ -1,12 +1,12 @@
 services:
   - type: web
     name: tender-node
-    runtime: image
-    repo: https://github.com/NICTOLabs/TENDER.git
+    env: go
     plan: free
     region: oregon
     rootDir: go-chain
-    dockerfilePath: ./Dockerfile
+    buildCommand: go build -o tender-node .
+    startCommand: ./tender-node -api-port 10000 -p2p-port 3030 -data-dir /data -consensus pos
     envVars:
       - key: TENDER_API_PORT
         value: "10000"
