@@ -418,8 +418,27 @@ func (bc *Blockchain) loadFromDisk() error {
 	}
 	if len(bc.Chain) == 0 {
 		bc.createGenesisBlock()
+	} else {
+		bc.trimInvalidBlocks()
 	}
 	return nil
+}
+
+func (bc *Blockchain) trimInvalidBlocks() {
+	valid := 1
+	for i := 1; i < len(bc.Chain); i++ {
+		prev := bc.Chain[i-1]
+		block := bc.Chain[i]
+		if block.Index != prev.Index+1 || block.PreviousHash != prev.BlockHash {
+			break
+		}
+		valid = i + 1
+	}
+	if valid < len(bc.Chain) {
+		bc.Chain = bc.Chain[:valid]
+		_ = bc.saveToDisk()
+		bc.appendAuditEntry("chain_trimmed", "startup", fmt.Sprintf("height=%d", valid))
+	}
 }
 
 func (bc *Blockchain) seedDemoState() {
@@ -2327,7 +2346,7 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 				}
 			}
 			p2p.chain.mu.Lock()
-			if len(p2p.chain.Chain) < int(msg.Block.Index)+1 || p2p.chain.Chain[len(p2p.chain.Chain)-1].BlockHash != msg.Block.PreviousHash {
+			if len(p2p.chain.Chain) > 0 && int(msg.Block.Index) == len(p2p.chain.Chain) && p2p.chain.Chain[len(p2p.chain.Chain)-1].BlockHash == msg.Block.PreviousHash {
 				p2p.chain.Chain = append(p2p.chain.Chain, *msg.Block)
 				_ = p2p.chain.saveToDisk()
 			}
@@ -2375,20 +2394,20 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 				}
 				if !known {
 					p2p.peers = append(p2p.peers, msg.Peer.Address)
-				}
-				p2p.peerScores[msg.Peer.Address] = 1
-				p2p.trustedPeers[msg.Peer.Address] = true
-				var pubKey string
-				if p2p.chain != nil {
-					pubKey = p2p.chain.selectValidatorPubKey()
-				}
-				_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.advertisedAddr(), Peers: p2p.peers, ValidatorPubKey: pubKey}})
-				p2p.chain.mu.RLock()
-				chainCopy := make([]Block, len(p2p.chain.Chain))
-				copy(chainCopy, p2p.chain.Chain)
-				p2p.chain.mu.RUnlock()
-				if len(chainCopy) > 0 {
-					_ = p2p.writeMessage(conn, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
+					p2p.peerScores[msg.Peer.Address] = 1
+					p2p.trustedPeers[msg.Peer.Address] = true
+					var pubKey string
+					if p2p.chain != nil {
+						pubKey = p2p.chain.selectValidatorPubKey()
+					}
+					_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.advertisedAddr(), Peers: p2p.peers, ValidatorPubKey: pubKey}})
+					p2p.chain.mu.RLock()
+					chainCopy := make([]Block, len(p2p.chain.Chain))
+					copy(chainCopy, p2p.chain.Chain)
+					p2p.chain.mu.RUnlock()
+					if len(chainCopy) > 0 {
+						_ = p2p.writeMessage(conn, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
+					}
 				}
 			}
 		}
