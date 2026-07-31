@@ -292,9 +292,10 @@ func NewBlockchain(consensus ConsensusType, dataDir string, chainID string, gene
 }
 
 func (bc *Blockchain) createGenesisBlock() {
+	genesisTime := bc.ChainGenesisTime()
 	genesisPayload, _ := json.Marshal(map[string]any{
 		"chain_id":       bc.ChainID,
-		"timestamp":      time.Now().Unix(),
+		"timestamp":      genesisTime,
 		"initial_supply": bc.TokenSupply,
 		"consensus":      consensusName(bc.Consensus),
 	})
@@ -303,13 +304,18 @@ func (bc *Blockchain) createGenesisBlock() {
 		Index:        0,
 		Author:       "genesis",
 		PreviousHash: "0",
-		Timestamp:    time.Now().Unix(),
+		Timestamp:    genesisTime,
 		Transactions: []Transaction{},
 		Nonce:        0,
 		BlockHash:    hex.EncodeToString(genesisHash[:]),
 	}
 	bc.Chain = append(bc.Chain, genesis)
 	bc.GenesisHash = genesis.BlockHash
+}
+
+func (bc *Blockchain) ChainGenesisTime() int64 {
+	sum := sha256.Sum256([]byte(bc.ChainID))
+	return 1700000000 + int64(sum[0])%157680000
 }
 
 func (bc *Blockchain) StateRootSnapshotEquivalent() string {
