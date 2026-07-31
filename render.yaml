@@ -7,6 +7,8 @@ services:
     rootDir: go-chain
     dockerfilePath: ./Dockerfile
     envVars:
+      - key: TENDER_API_KEY
+        value: "OUXzqxAmkH5d3SN0C7so4KEGRu21ht9y"
       - key: TENDER_API_PORT
         value: "10000"
       - key: TENDER_P2P_PORT
