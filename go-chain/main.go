@@ -2392,10 +2392,10 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 						break
 					}
 				}
+				p2p.peerScores[msg.Peer.Address] = 1
+				p2p.trustedPeers[msg.Peer.Address] = true
 				if !known {
 					p2p.peers = append(p2p.peers, msg.Peer.Address)
-					p2p.peerScores[msg.Peer.Address] = 1
-					p2p.trustedPeers[msg.Peer.Address] = true
 					var pubKey string
 					if p2p.chain != nil {
 						pubKey = p2p.chain.selectValidatorPubKey()
