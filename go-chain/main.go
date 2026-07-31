@@ -1558,11 +1558,6 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			http.Error(w, "circuit breaker open", http.StatusServiceUnavailable)
 			return
 		}
-		if err := requireAuth(r, cfg); err != nil {
-			cb.RecordFailure()
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
 		if !limiter.allow(r.RemoteAddr) {
 			cb.RecordFailure()
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
@@ -1580,10 +1575,6 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		_ = json.NewEncoder(w).Encode(chain.AuditTrail)
 	})
 	mux.HandleFunc("/api/monitoring", func(w http.ResponseWriter, r *http.Request) {
-		if err := requireAuth(r, cfg); err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
 		if !limiter.allow(r.RemoteAddr) {
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
