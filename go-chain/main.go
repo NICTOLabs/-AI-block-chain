@@ -2355,9 +2355,23 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 						continue
 					}
 				}
-				p2p.peers = append(p2p.peers, msg.Peer.Address)
+				known := false
+				for _, existing := range p2p.peers {
+					if existing == msg.Peer.Address {
+						known = true
+						break
+					}
+				}
+				if !known {
+					p2p.peers = append(p2p.peers, msg.Peer.Address)
+				}
 				p2p.peerScores[msg.Peer.Address] = 1
 				p2p.trustedPeers[msg.Peer.Address] = true
+				var pubKey string
+				if p2p.chain != nil {
+					pubKey = p2p.chain.selectValidatorPubKey()
+				}
+				_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.advertisedAddr(), Peers: p2p.peers, ValidatorPubKey: pubKey}})
 			}
 		}
 	}
