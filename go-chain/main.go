@@ -2216,6 +2216,7 @@ func (p2p *P2PNode) ensurePeerConn(target string) (net.Conn, *bufio.Writer, erro
 	p2p.peerConns[target] = conn
 	p2p.peerWriters[target] = w
 	p2p.peerMu.Unlock()
+	go p2p.handleConn(conn)
 
 	return conn, w, nil
 }
