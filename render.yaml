@@ -17,3 +17,5 @@ services:
         value: /data
       - key: TENDER_CONSENSUS
         value: pos
+      - key: TENDER_BOOTSTRAP_PEERS
+        value: "tobacco-charlie-valued-item.trycloudflare.com:443"

@@ -163,17 +163,18 @@ func (p2p *P2PNode) StrictMode() bool           { return p2p.strictMode }
 func (p2p *P2PNode) Shutdown() chan struct{}    { return p2p.shutdown }
 
 type serverConfig struct {
-	APIKey      string
-	EnableAuth  bool
-	RateLimit   int
-	RateWindow  time.Duration
-	EnableTLS   bool
-	MetricsPath string
-	APIPort     int
-	P2PPort     int
-	DataDir     string
-	Consensus   string
-	StrictP2P   bool
+	APIKey         string
+	EnableAuth     bool
+	RateLimit      int
+	RateWindow     time.Duration
+	EnableTLS      bool
+	MetricsPath    string
+	APIPort        int
+	P2PPort        int
+	DataDir        string
+	Consensus      string
+	StrictP2P      bool
+	BootstrapPeers string
 }
 
 type rateLimiter struct {
@@ -1393,6 +1394,7 @@ func serverConfigFromEnv() serverConfig {
 		DataDir:     getEnvOrDefault("TENDER_DATA_DIR", "./data"),
 		Consensus:   strings.ToLower(getEnvOrDefault("TENDER_CONSENSUS", "pos")),
 		StrictP2P:   getEnvBoolOrDefault("TENDER_STRICT_P2P", true),
+		BootstrapPeers: getEnvOrDefault("TENDER_BOOTSTRAP_PEERS", ""),
 	}
 	return cfg
 }
@@ -1488,6 +1490,15 @@ func main() {
 
 	if *bootstrapPeers != "" {
 		for _, peer := range strings.Split(*bootstrapPeers, ",") {
+			peer = strings.TrimSpace(peer)
+			if peer != "" {
+				p2p.peers = append(p2p.peers, peer)
+			}
+		}
+	}
+
+	if envCfg.BootstrapPeers != "" {
+		for _, peer := range strings.Split(envCfg.BootstrapPeers, ",") {
 			peer = strings.TrimSpace(peer)
 			if peer != "" {
 				p2p.peers = append(p2p.peers, peer)
