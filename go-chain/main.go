@@ -1537,6 +1537,12 @@ func main() {
 
 	go p2p.Start()
 	go p2p.connectToPeers()
+	go func() {
+		for {
+			time.Sleep(30 * time.Second)
+			p2p.connectToPeers()
+		}
+	}()
 	go startAPI(chain, envCfg.APIPort, p2p, envCfg)
 
 	log.Printf("{\"event\":\"node_start\",\"currency\":\"%s\",\"api_port\":%d,\"p2p_port\":%d,\"consensus\":\"%s\",\"chain_id\":\"%s\"}", CurrencyName, envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus, *chainID)
@@ -2378,6 +2384,13 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 					pubKey = p2p.chain.selectValidatorPubKey()
 				}
 				_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.advertisedAddr(), Peers: p2p.peers, ValidatorPubKey: pubKey}})
+				p2p.chain.mu.RLock()
+				chainCopy := make([]Block, len(p2p.chain.Chain))
+				copy(chainCopy, p2p.chain.Chain)
+				p2p.chain.mu.RUnlock()
+				if len(chainCopy) > 0 {
+					_ = p2p.writeMessage(conn, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
+				}
 			}
 		}
 	}
