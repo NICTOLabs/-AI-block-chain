@@ -1734,6 +1734,10 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": payload.Amount})
 	})
 	mux.HandleFunc("/api/wallet", func(w http.ResponseWriter, r *http.Request) {
+		if err := requireAuth(r, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
 		wallet := blockchain.NewWallet()
 		address := wallet.Address()
 		chain.AddAccount(address, 1000, false)
@@ -2059,7 +2063,17 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		_, _ = fmt.Fprintf(w, "tender_tx_rejected_total %d\n", atomic.LoadInt64(&metrics.txRejected))
 	})
 	log.Printf("{\"event\":\"api_listen\",\"port\":%d}", port)
-	if err := http.ListenAndServe(":"+strconv.Itoa(port), mux); err != nil {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
+			if err := requireAuth(r, cfg); err != nil {
+				http.Error(w, err.Error(), http.StatusUnauthorized)
+				return
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
+	if err := http.ListenAndServe(":"+strconv.Itoa(port), handler); err != nil {
 		log.Fatal(err)
 	}
 }
