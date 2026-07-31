@@ -318,6 +318,18 @@ func (bc *Blockchain) ChainGenesisTime() int64 {
 	return 1700000000 + int64(sum[0])%157680000
 }
 
+func (bc *Blockchain) DeterministicGenesisHash() string {
+	genesisTime := bc.ChainGenesisTime()
+	genesisPayload, _ := json.Marshal(map[string]any{
+		"chain_id":       bc.ChainID,
+		"timestamp":      genesisTime,
+		"initial_supply": InitialSupply,
+		"consensus":      consensusName(bc.Consensus),
+	})
+	sum := sha256.Sum256(genesisPayload)
+	return hex.EncodeToString(sum[:])
+}
+
 func (bc *Blockchain) StateRootSnapshotEquivalent() string {
 	view := map[string]any{
 		"chain_id":       bc.ChainID,
@@ -391,6 +403,21 @@ func (bc *Blockchain) loadFromDisk() error {
 	bc.PendingReversals = state.PendingReversals
 	bc.IrreversibleTxs = state.IrreversibleTxs
 	bc.Wallets = make(map[string]ManagedWallet)
+	expectedGenesis := bc.DeterministicGenesisHash()
+	if len(bc.Chain) > 0 && bc.Chain[0].BlockHash != "" && bc.Chain[0].BlockHash != expectedGenesis {
+		backupPath := path + ".mismatched-genesis.bak"
+		_ = os.Rename(path, backupPath)
+		bc.Chain = []Block{}
+		bc.Pending = []Transaction{}
+		bc.Ledger = make(map[string]*Account)
+		bc.Authorities = []string{}
+		bc.TokenSupply = InitialSupply
+		bc.AuditTrail = []AuditEntry{}
+		bc.UsedNonces = make(map[string]map[uint64]struct{})
+		bc.SeenTxIDs = make(map[string]struct{})
+		bc.NextNonce = make(map[string]uint64)
+		bc.appendAuditEntry("genesis_mismatch_reset", "system", fmt.Sprintf("backup=%s", backupPath))
+	}
 	if bc.UsedNonces == nil {
 		bc.UsedNonces = make(map[string]map[uint64]struct{})
 	}
