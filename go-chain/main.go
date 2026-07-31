@@ -2321,13 +2321,12 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 			continue
 		}
 		if msg.Type == "block" && msg.Block != nil {
-			p2p.chain.mu.Lock()
 			if len(msg.Chain) > 0 {
 				if p2p.chain.replaceChain(msg.Chain) {
-					p2p.chain.mu.Unlock()
 					continue
 				}
 			}
+			p2p.chain.mu.Lock()
 			if len(p2p.chain.Chain) < int(msg.Block.Index)+1 || p2p.chain.Chain[len(p2p.chain.Chain)-1].BlockHash != msg.Block.PreviousHash {
 				p2p.chain.Chain = append(p2p.chain.Chain, *msg.Block)
 				_ = p2p.chain.saveToDisk()
