@@ -9,6 +9,7 @@ FROM alpine:latest
 RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /root/
 COPY --from=builder /tender-node .
+COPY --from=builder /app/web ./web
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh && mkdir -p /root/data
 EXPOSE 10000 3030
