@@ -125,6 +125,7 @@ type Blockchain struct {
 
 type P2PNode struct {
 	addr           string
+	advertiseAddr  string
 	peers          []string
 	peerScores     map[string]int
 	trustedPeers   map[string]bool
@@ -141,6 +142,13 @@ type P2PNode struct {
 	peerMu         sync.Mutex
 	dialBackoff    map[string]time.Time
 	backoffMu      sync.Mutex
+}
+
+func (p2p *P2PNode) advertisedAddr() string {
+	if p2p.advertiseAddr != "" {
+		return p2p.advertiseAddr
+	}
+	return p2p.addr
 }
 
 type p2pHost interface {
@@ -175,6 +183,7 @@ type serverConfig struct {
 	Consensus      string
 	StrictP2P      bool
 	BootstrapPeers string
+	AdvertiseAddr  string
 }
 
 type rateLimiter struct {
@@ -1395,6 +1404,7 @@ func serverConfigFromEnv() serverConfig {
 		Consensus:   strings.ToLower(getEnvOrDefault("TENDER_CONSENSUS", "pos")),
 		StrictP2P:   getEnvBoolOrDefault("TENDER_STRICT_P2P", true),
 		BootstrapPeers: getEnvOrDefault("TENDER_BOOTSTRAP_PEERS", ""),
+		AdvertiseAddr:  getEnvOrDefault("TENDER_ADVERTISE_ADDR", ""),
 	}
 	return cfg
 }
@@ -1438,6 +1448,7 @@ func main() {
 	chainID := flag.String("chain-id", "tdr-mainnet-1", "Chain ID for replay protection")
 	genesisPath := flag.String("genesis", "", "Path to genesis JSON file for initial state")
 	p2pBackend := flag.String("p2p-backend", "tcp", "P2P backend: tcp or libp2p")
+	p2pAdvertise := flag.String("p2p-advertise", "", "Public address advertised to peers (host:port)")
 	flag.Parse()
 
 	envCfg := serverConfigFromEnv()
@@ -1465,6 +1476,9 @@ func main() {
 	if *rateLimit != 0 {
 		envCfg.RateLimit = *rateLimit
 	}
+	if *p2pAdvertise != "" {
+		envCfg.AdvertiseAddr = *p2pAdvertise
+	}
 	if envCfg.APIKey == "" {
 		log.Fatal("API key must be set via --api-key or TENDER_API_KEY env var")
 	}
@@ -1483,7 +1497,7 @@ func main() {
 			log.Fatal("sealed-mode integrity check failed")
 		}
 	}
-	p2p := &P2PNode{addr: fmt.Sprintf("0.0.0.0:%d", envCfg.P2PPort), peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 50, strictMode: envCfg.StrictP2P, seenMsgIDs: make(map[string]time.Time), peerConns: make(map[string]net.Conn), peerWriters: make(map[string]*bufio.Writer), dialBackoff: make(map[string]time.Time)}
+	p2p := &P2PNode{addr: fmt.Sprintf("0.0.0.0:%d", envCfg.P2PPort), advertiseAddr: envCfg.AdvertiseAddr, peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 50, strictMode: envCfg.StrictP2P, seenMsgIDs: make(map[string]time.Time), peerConns: make(map[string]net.Conn), peerWriters: make(map[string]*bufio.Writer), dialBackoff: make(map[string]time.Time)}
 	if *peer != "" {
 		p2p.peers = append(p2p.peers, *peer)
 	}
@@ -2107,7 +2121,7 @@ func (p2p *P2PNode) connectToPeers() {
 			if p2p.chain != nil {
 				pubKey = p2p.chain.selectValidatorPubKey()
 			}
-			_ = p2p.writePeer(target, mustMarshal(p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.addr, Peers: p2p.peers, ValidatorPubKey: pubKey}}))
+			_ = p2p.writePeer(target, mustMarshal(p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.advertisedAddr(), Peers: p2p.peers, ValidatorPubKey: pubKey}}))
 		}(peer)
 	}
 }
@@ -2335,7 +2349,7 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 			if p2p.strictMode && len(p2p.peers) >= p2p.maxPeers {
 				continue
 			}
-			if msg.Peer.Address != "" && msg.Peer.Address != p2p.addr {
+			if msg.Peer.Address != "" && msg.Peer.Address != p2p.addr && msg.Peer.Address != p2p.advertisedAddr() {
 				if p2p.strictMode && msg.Peer.ValidatorPubKey != "" {
 					if !p2p.chain.isActiveValidatorPubKey(msg.Peer.ValidatorPubKey) {
 						continue

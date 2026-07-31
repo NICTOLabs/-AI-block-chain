@@ -19,3 +19,5 @@ services:
         value: pos
       - key: TENDER_BOOTSTRAP_PEERS
         value: "bore.pub:10371"
+      - key: TENDER_ADVERTISE_ADDR
+        value: "tender-node.onrender.com:3030"
