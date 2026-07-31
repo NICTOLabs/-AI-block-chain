@@ -142,6 +142,7 @@ type P2PNode struct {
 	peerMu         sync.Mutex
 	dialBackoff    map[string]time.Time
 	backoffMu      sync.Mutex
+	helloReplies   map[string]time.Time
 }
 
 func (p2p *P2PNode) advertisedAddr() string {
@@ -1549,7 +1550,7 @@ func main() {
 			log.Fatal("sealed-mode integrity check failed")
 		}
 	}
-	p2p := &P2PNode{addr: fmt.Sprintf("0.0.0.0:%d", envCfg.P2PPort), advertiseAddr: envCfg.AdvertiseAddr, peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 50, strictMode: envCfg.StrictP2P, seenMsgIDs: make(map[string]time.Time), peerConns: make(map[string]net.Conn), peerWriters: make(map[string]*bufio.Writer), dialBackoff: make(map[string]time.Time)}
+	p2p := &P2PNode{addr: fmt.Sprintf("0.0.0.0:%d", envCfg.P2PPort), advertiseAddr: envCfg.AdvertiseAddr, peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 50, strictMode: envCfg.StrictP2P, seenMsgIDs: make(map[string]time.Time), peerConns: make(map[string]net.Conn), peerWriters: make(map[string]*bufio.Writer), dialBackoff: make(map[string]time.Time), helloReplies: make(map[string]time.Time)}
 	if *peer != "" {
 		p2p.peers = append(p2p.peers, *peer)
 	}
@@ -2429,11 +2430,20 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 				p2p.trustedPeers[msg.Peer.Address] = true
 				if !known {
 					p2p.peers = append(p2p.peers, msg.Peer.Address)
+				}
+				reply := !known
+				if last, ok := p2p.helloReplies[msg.Peer.Address]; !ok || time.Since(last) > 20*time.Second {
+					p2p.helloReplies[msg.Peer.Address] = time.Now()
+					reply = true
+				}
+				if reply {
 					var pubKey string
 					if p2p.chain != nil {
 						pubKey = p2p.chain.selectValidatorPubKey()
 					}
 					_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.advertisedAddr(), Peers: p2p.peers, ValidatorPubKey: pubKey}})
+				}
+				if !known {
 					p2p.chain.mu.RLock()
 					chainCopy := make([]Block, len(p2p.chain.Chain))
 					copy(chainCopy, p2p.chain.Chain)
