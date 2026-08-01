@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"runtime"
 
 	"ai_block_chain_go/blockchain"
 	p2ppackage "ai_block_chain_go/p2p"
@@ -241,6 +242,12 @@ type nodeState struct {
 	IrreversibleTxs map[string]struct{}        `json:"irreversible_txs"`
 }
 
+type LedgerState struct {
+	Ledger      map[string]*Account `json:"ledger"`
+	Authorities []string            `json:"authorities"`
+	TokenSupply uint64              `json:"token_supply"`
+}
+
 type p2pMessage struct {
 	Type     string       `json:"type"`
 	From     string       `json:"from,omitempty"`
@@ -249,6 +256,7 @@ type p2pMessage struct {
 	Chain    []Block      `json:"chain,omitempty"`
 	Tx       *Transaction `json:"tx,omitempty"`
 	Peer     *NodeInfo    `json:"peer,omitempty"`
+	State    *LedgerState `json:"state,omitempty"`
 	StreamID string       `json:"stream_id,omitempty"`
 }
 
@@ -1430,6 +1438,51 @@ func (bc *Blockchain) snapshot() nodeState {
 	}
 }
 
+func (bc *Blockchain) ledgerState() *LedgerState {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	ledger := make(map[string]*Account, len(bc.Ledger))
+	for addr, acct := range bc.Ledger {
+		clone := *acct
+		ledger[addr] = &clone
+	}
+	return &LedgerState{
+		Ledger:      ledger,
+		Authorities: append([]string(nil), bc.Authorities...),
+		TokenSupply: bc.TokenSupply,
+	}
+}
+
+func (bc *Blockchain) applyLedgerState(state *LedgerState) {
+	if state == nil {
+		return
+	}
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	for addr, acct := range state.Ledger {
+		if acct == nil {
+			continue
+		}
+		existing := bc.Ledger[addr]
+		if existing == nil {
+			clone := *acct
+			bc.Ledger[addr] = &clone
+			bc.appendAuditEntry("state_synced_account", addr, fmt.Sprintf("balance=%d staked=%d agent=%t", acct.Balance, acct.Staked, acct.IsAgent))
+		} else {
+			existing.Balance = acct.Balance
+			existing.Staked = acct.Staked
+			existing.IsAgent = acct.IsAgent
+		}
+	}
+	if len(state.Authorities) > 0 {
+		bc.Authorities = append([]string(nil), state.Authorities...)
+	}
+	if state.TokenSupply > 0 {
+		bc.TokenSupply = state.TokenSupply
+	}
+	bc.appendAuditEntry("state_synced", "network", fmt.Sprintf("accounts=%d supply=%d", len(state.Ledger), state.TokenSupply))
+}
+
 func consensusName(consensus ConsensusType) string {
 	switch consensus {
 	case ProofOfAuthority:
@@ -1751,6 +1804,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			return
 		}
 		_ = chain.saveToDiskSafe()
+		p2p.broadcastState(chain.ledgerState())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "registered"})
 	})
@@ -1812,6 +1866,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		}
 		chain.Stake(payload.Address, payload.Amount)
 		_ = chain.saveToDiskSafe()
+		p2p.broadcastState(chain.ledgerState())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": payload.Amount})
 	})
@@ -1824,6 +1879,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		address := wallet.Address()
 		chain.AddAccount(address, 1000, false)
 		_ = chain.saveToDiskSafe()
+		p2p.broadcastState(chain.ledgerState())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": address, "public_key": hex.EncodeToString(wallet.PublicKey)})
 	})
@@ -1846,6 +1902,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 			return
 		}
 		_ = chain.saveToDiskSafe()
+		p2p.broadcastState(chain.ledgerState())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(wallet)
 	})
@@ -1995,6 +2052,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		}
 		chain.AddAccount(payload.Address, amount, false)
 		_ = chain.saveToDiskSafe()
+		p2p.broadcastState(chain.ledgerState())
 		chain.mu.RLock()
 		balance := uint64(0)
 		if acct := chain.Ledger[payload.Address]; acct != nil {
@@ -2031,6 +2089,7 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		chain.TokenSupply += payload.Amount
 		chain.mu.Unlock()
 		_ = chain.saveToDiskSafe()
+		p2p.broadcastState(chain.ledgerState())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"address": payload.Address, "amount": payload.Amount, "status": "minted"})
 	})
@@ -2368,7 +2427,19 @@ func mustMarshal(msg p2pMessage) []byte {
 	return payload
 }
 
+func stackTrace() string {
+	buf := make([]byte, 64*1024)
+	n := runtime.Stack(buf, true)
+	return string(buf[:n])
+}
+
 func (p2p *P2PNode) handleConn(conn net.Conn) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("{\"event\":\"p2p_panic\",\"error\":\"%v\"}", r)
+			log.Printf("{\"event\":\"p2p_panic_trace\"}%s", stackTrace())
+		}
+	}()
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 	remote := conn.RemoteAddr().String()
@@ -2397,6 +2468,9 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 			continue
 		}
 		if msg.Type == "block" && msg.Block != nil {
+			if msg.State != nil {
+				p2p.chain.applyLedgerState(msg.State)
+			}
 			if len(msg.Chain) > 0 {
 				if p2p.chain.replaceChain(msg.Chain) {
 					continue
@@ -2421,6 +2495,19 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 		}
 		if msg.Type == "tx" && msg.Tx != nil {
 			p2p.chain.EnqueueTransaction(*msg.Tx)
+			relayPayload := mustMarshal(msg)
+			for _, peer := range p2p.peers {
+				if peer == "" || peer == p2p.addr || peer == remote || !p2p.trustedPeers[peer] {
+					continue
+				}
+				if msg.StreamID != "" && p2p.seenMessageID(msg.StreamID) {
+					continue
+				}
+				_ = p2p.writePeer(peer, relayPayload)
+			}
+		}
+		if msg.Type == "state" && msg.State != nil {
+			p2p.chain.applyLedgerState(msg.State)
 			relayPayload := mustMarshal(msg)
 			for _, peer := range p2p.peers {
 				if peer == "" || peer == p2p.addr || peer == remote || !p2p.trustedPeers[peer] {
@@ -2474,7 +2561,7 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 					copy(chainCopy, p2p.chain.Chain)
 					p2p.chain.mu.RUnlock()
 					if len(chainCopy) > 0 {
-						_ = p2p.writeMessage(conn, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
+						_ = p2p.writeMessage(conn, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, State: p2p.chain.ledgerState(), StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
 					}
 				} else if p2p.chain != nil && msg.Peer.Height < uint64(len(p2p.chain.Chain)) {
 					p2p.chain.mu.RLock()
@@ -2482,7 +2569,7 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 					copy(chainCopy, p2p.chain.Chain)
 					p2p.chain.mu.RUnlock()
 					if len(chainCopy) > 0 {
-						_ = p2p.writeMessage(conn, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
+						_ = p2p.writeMessage(conn, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, State: p2p.chain.ledgerState(), StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
 					}
 				}
 			}
@@ -2495,7 +2582,18 @@ func (p2p *P2PNode) broadcastTransaction(tx Transaction) {
 }
 
 func (p2p *P2PNode) broadcastBlock(block *Block) {
-	p2p.broadcastMessage(p2pMessage{Type: "block", Block: block})
+	msg := p2pMessage{Type: "block", Block: block}
+	if p2p.chain != nil {
+		msg.State = p2p.chain.ledgerState()
+	}
+	p2p.broadcastMessage(msg)
+}
+
+func (p2p *P2PNode) broadcastState(state *LedgerState) {
+	if state == nil {
+		return
+	}
+	p2p.broadcastMessage(p2pMessage{Type: "state", State: state})
 }
 
 func (p2p *P2PNode) broadcastMessage(msg p2pMessage) {
