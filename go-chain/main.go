@@ -215,9 +215,10 @@ type serverMetrics struct {
 }
 
 type NodeInfo struct {
-	Address        string   `json:"address"`
-	Peers          []string `json:"peers"`
-	ValidatorPubKey string  `json:"validator_pubkey,omitempty"`
+	Address         string   `json:"address"`
+	Peers           []string `json:"peers"`
+	ValidatorPubKey string   `json:"validator_pubkey,omitempty"`
+	Height          uint64   `json:"height,omitempty"`
 }
 
 type nodeState struct {
@@ -1774,6 +1775,28 @@ func startAPI(chain *Blockchain, port int, p2p *P2PNode, cfg serverConfig) {
 		defer chain.mu.RUnlock()
 		_ = json.NewEncoder(w).Encode(chain.Ledger)
 	})
+	mux.HandleFunc("/api/account", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		addr := r.URL.Query().Get("address")
+		if addr == "" {
+			http.Error(w, "missing address query param", http.StatusBadRequest)
+			return
+		}
+		chain.mu.RLock()
+		defer chain.mu.RUnlock()
+		acct, exists := chain.Ledger[addr]
+		if !exists {
+			http.Error(w, "address not found", http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"address":     acct.Address,
+			"balance":     acct.Balance,
+			"staked":      acct.Staked,
+			"is_agent":    acct.IsAgent,
+			"next_nonce":  chain.NextNonce[addr],
+		})
+	})
 	mux.HandleFunc("/api/stake", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -2445,9 +2468,15 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 					if p2p.chain != nil {
 						pubKey = p2p.chain.selectValidatorPubKey()
 					}
-					_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.advertisedAddr(), Peers: p2p.peers, ValidatorPubKey: pubKey}})
-				}
-				if !known {
+					_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.advertisedAddr(), Peers: p2p.peers, ValidatorPubKey: pubKey, Height: uint64(len(p2p.chain.Chain))}})
+					p2p.chain.mu.RLock()
+					chainCopy := make([]Block, len(p2p.chain.Chain))
+					copy(chainCopy, p2p.chain.Chain)
+					p2p.chain.mu.RUnlock()
+					if len(chainCopy) > 0 {
+						_ = p2p.writeMessage(conn, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
+					}
+				} else if p2p.chain != nil && msg.Peer.Height < uint64(len(p2p.chain.Chain)) {
 					p2p.chain.mu.RLock()
 					chainCopy := make([]Block, len(p2p.chain.Chain))
 					copy(chainCopy, p2p.chain.Chain)

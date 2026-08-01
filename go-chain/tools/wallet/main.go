@@ -40,6 +40,8 @@ type Transaction struct {
 }
 
 const defaultAPI = "http://localhost:8080"
+const HogohogoPerTender = uint64(10_000_000)
+const defaultChainID = "tdr-mainnet-1"
 
 func createWallet(label string) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -94,7 +96,7 @@ func showWallet(filename string) {
 }
 
 func balanceWallet(apiURL, address string) {
-	resp, err := http.Get(apiURL + "/api/accounts")
+	resp, err := http.Get(apiURL + "/api/account?address=" + address)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error connecting to node at %s: %v\n", apiURL, err)
 		os.Exit(1)
@@ -105,30 +107,68 @@ func balanceWallet(apiURL, address string) {
 		fmt.Fprintf(os.Stderr, "error reading response: %v\n", err)
 		os.Exit(1)
 	}
-	var accounts map[string]struct {
-		Address string `json:"address"`
-		Balance uint64 `json:"balance"`
-		Staked  uint64 `json:"staked"`
-		IsAgent bool   `json:"is_agent"`
-	}
-	if err := json.Unmarshal(body, &accounts); err != nil {
-		fmt.Fprintf(os.Stderr, "error parsing accounts: %v\n", err)
-		os.Exit(1)
-	}
-	acct, exists := accounts[address]
-	if !exists {
+	if resp.StatusCode == http.StatusNotFound {
 		fmt.Printf("Address %s has 0 TDR (not found on chain)\n", address)
 		return
 	}
-	fmt.Printf("Address: %s\n", address)
-	fmt.Printf("Balance: %d TDR\n", acct.Balance)
-	fmt.Printf("Staked:  %d TDR\n", acct.Staked)
-	balanceTdr := acct.Balance / 100_000_000
-	balanceHogo := acct.Balance % 100_000_000
-	fmt.Printf("Balance: %d.%08d TDR\n", balanceTdr, balanceHogo)
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "error from node (%d): %s\n", resp.StatusCode, string(body))
+		os.Exit(1)
+	}
+	var acct struct {
+		Address   string `json:"address"`
+		Balance   uint64 `json:"balance"`
+		Staked    uint64 `json:"staked"`
+		IsAgent   bool   `json:"is_agent"`
+		NextNonce uint64 `json:"next_nonce"`
+	}
+	if err := json.Unmarshal(body, &acct); err != nil {
+		fmt.Fprintf(os.Stderr, "error parsing account: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Address:    %s\n", address)
+	fmt.Printf("Balance:    %s\n", formatTender(acct.Balance))
+	fmt.Printf("Staked:     %s\n", formatTender(acct.Staked))
+	fmt.Printf("Is Agent:   %v\n", acct.IsAgent)
+	fmt.Printf("Next Nonce: %d\n", acct.NextNonce)
 }
 
-func sendTransaction(apiURL, walletFile, toAddress string, amount uint64, fee uint64) {
+func formatTender(amount uint64) string {
+	tender := amount / HogohogoPerTender
+	hogohogo := amount % HogohogoPerTender
+	return fmt.Sprintf("%d.%08d TDR", tender, hogohogo)
+}
+
+func fetchNextNonce(apiURL, address string) uint64 {
+	resp, err := http.Get(apiURL + "/api/account?address=" + address)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error connecting to node at %s: %v\n", apiURL, err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading nonce response: %v\n", err)
+		os.Exit(1)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return 0
+	}
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "error from node (%d): %s\n", resp.StatusCode, string(body))
+		os.Exit(1)
+	}
+	var acct struct {
+		NextNonce uint64 `json:"next_nonce"`
+	}
+	if err := json.Unmarshal(body, &acct); err != nil {
+		fmt.Fprintf(os.Stderr, "error parsing nonce: %v\n", err)
+		os.Exit(1)
+	}
+	return acct.NextNonce
+}
+
+func sendTransaction(apiURL, walletFile, toAddress string, amount uint64, fee uint64, apiKey string) {
 	data, err := os.ReadFile(walletFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading wallet: %v\n", err)
@@ -147,16 +187,17 @@ func sendTransaction(apiURL, walletFile, toAddress string, amount uint64, fee ui
 	}
 	priv := ed25519.PrivateKey(privBytes)
 
-	hogohogoAmount := amount * 100_000_000
+	hogohogoAmount := amount * HogohogoPerTender
+	nonce := fetchNextNonce(apiURL, wallet.Address)
 
 	tx := Transaction{
 		From:    wallet.Address,
 		To:      toAddress,
 		Amount:  hogohogoAmount,
 		Fee:     fee,
-		Nonce:   0,
+		Nonce:   nonce,
 		TxType:  "TRANSFER",
-		ChainID: "tdr-mainnet-1",
+		ChainID: defaultChainID,
 	}
 
 	tx.FromPubKey = wallet.PublicKey
@@ -168,7 +209,17 @@ func sendTransaction(apiURL, walletFile, toAddress string, amount uint64, fee ui
 	tx.Signature = hex.EncodeToString(sig)
 
 	body, _ := json.Marshal(tx)
-	resp, err := http.Post(apiURL+"/api/transactions", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, apiURL+"/api/transactions", bytes.NewReader(body))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error building request: %v\n", err)
+		os.Exit(1)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error submitting transaction: %v\n", err)
 		os.Exit(1)
@@ -180,11 +231,12 @@ func sendTransaction(apiURL, walletFile, toAddress string, amount uint64, fee ui
 		os.Exit(1)
 	}
 	fmt.Println("=== Transaction Sent ===")
-	fmt.Printf("  From:  %s\n", wallet.Address)
-	fmt.Printf("  To:    %s\n", toAddress)
-	fmt.Printf("  Amount: %d TDR\n", amount)
-	fmt.Printf("  Tx ID: %s\n", tx.ID)
-	fmt.Printf("  Status: accepted\n")
+	fmt.Printf("  From:    %s\n", wallet.Address)
+	fmt.Printf("  To:      %s\n", toAddress)
+	fmt.Printf("  Amount:  %s\n", formatTender(hogohogoAmount))
+	fmt.Printf("  Nonce:   %d\n", nonce)
+	fmt.Printf("  Tx ID:   %s\n", tx.ID)
+	fmt.Printf("  Status:  accepted\n")
 }
 
 func canonicalBytes(tx Transaction) []byte {
@@ -218,8 +270,12 @@ func main() {
 		fmt.Println("Usage:")
 		fmt.Println("  tender-wallet create [label]             Create a new wallet")
 		fmt.Println("  tender-wallet show <file>                Show wallet details")
-		fmt.Println("  tender-wallet balance [address] [api]    Check balance of an address")
-		fmt.Println("  tender-wallet send <file> <to> <amount> [api] [fee]  Send TDR")
+		fmt.Println("  tender-wallet balance <address> [api]    Check balance of an address")
+		fmt.Println("  tender-wallet send <file> <to> <amount> [api] [fee] [api-key]  Send TDR")
+		fmt.Println()
+		fmt.Println("Environment:")
+		fmt.Println("  TENDER_API_KEY                         API key for authenticated nodes")
+		fmt.Println("  TENDER_API_URL                         Default node API URL (default http://localhost:8080)")
 		fmt.Println()
 		fmt.Println("Examples:")
 		fmt.Println("  tender-wallet create my-wallet")
@@ -228,6 +284,12 @@ func main() {
 		fmt.Println("  tender-wallet send tender-wallet-abcd.json f7cddfdc... 100")
 		return
 	}
+
+	apiURL := os.Getenv("TENDER_API_URL")
+	if apiURL == "" {
+		apiURL = defaultAPI
+	}
+	apiKey := os.Getenv("TENDER_API_KEY")
 
 	switch os.Args[1] {
 	case "create":
@@ -247,17 +309,15 @@ func main() {
 			fmt.Fprintf(os.Stderr, "usage: tender-wallet balance <address> [api-url]\n")
 			os.Exit(1)
 		}
-		apiURL := defaultAPI
 		if len(os.Args) > 3 {
 			apiURL = os.Args[3]
 		}
 		balanceWallet(apiURL, os.Args[2])
 	case "send":
 		if len(os.Args) < 5 {
-			fmt.Fprintf(os.Stderr, "usage: tender-wallet send <wallet-file> <to-address> <amount> [api-url] [fee]\n")
+			fmt.Fprintf(os.Stderr, "usage: tender-wallet send <wallet-file> <to-address> <amount> [api-url] [fee] [api-key]\n")
 			os.Exit(1)
 		}
-		apiURL := defaultAPI
 		fee := uint64(1)
 		args := os.Args[2:]
 		walletFile := args[0]
@@ -277,7 +337,10 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		sendTransaction(apiURL, walletFile, toAddress, amount, fee)
+		if len(args) > 5 {
+			apiKey = args[5]
+		}
+		sendTransaction(apiURL, walletFile, toAddress, amount, fee, apiKey)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		os.Exit(1)
