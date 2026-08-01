@@ -17,7 +17,34 @@ services:
         value: /data
       - key: TENDER_CONSENSUS
         value: pos
-      - key: TENDER_BOOTSTRAP_PEERS
-        value: "bore.pub:10371"
+      - key: TENDER_NODE_ID
+        value: tender-node-a
+      - key: TENDER_RELAY_URL
+        value: "https://tender-relay.stephenwahogo0.workers.dev"
       - key: TENDER_ADVERTISE_ADDR
         value: "tender-node.onrender.com:3030"
+
+  - type: web
+    name: tender-node-home
+    env: docker
+    plan: free
+    region: oregon
+    rootDir: go-chain
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: TENDER_API_KEY
+        value: "OUXzqxAmkH5d3SN0C7so4KEGRu21ht9y"
+      - key: TENDER_API_PORT
+        value: "10000"
+      - key: TENDER_P2P_PORT
+        value: "3030"
+      - key: TENDER_DATA_DIR
+        value: /data
+      - key: TENDER_CONSENSUS
+        value: pos
+      - key: TENDER_NODE_ID
+        value: tender-node-b
+      - key: TENDER_RELAY_URL
+        value: "https://tender-relay.stephenwahogo0.workers.dev"
+      - key: TENDER_ADVERTISE_ADDR
+        value: "tender-node-home.onrender.com:3030"

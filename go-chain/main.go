@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -144,6 +146,10 @@ type P2PNode struct {
 	dialBackoff    map[string]time.Time
 	backoffMu      sync.Mutex
 	helloReplies   map[string]time.Time
+	relayURL       string
+	nodeID         string
+	relayLastPull  time.Time
+	relayMu        sync.Mutex
 }
 
 func (p2p *P2PNode) advertisedAddr() string {
@@ -186,6 +192,8 @@ type serverConfig struct {
 	StrictP2P      bool
 	BootstrapPeers string
 	AdvertiseAddr  string
+	RelayURL       string
+	NodeID         string
 }
 
 type rateLimiter struct {
@@ -252,6 +260,7 @@ type p2pMessage struct {
 	Type     string       `json:"type"`
 	From     string       `json:"from,omitempty"`
 	NodeID   string       `json:"node_id,omitempty"`
+	To       string       `json:"to,omitempty"`
 	Block    *Block       `json:"block,omitempty"`
 	Chain    []Block      `json:"chain,omitempty"`
 	Tx       *Transaction `json:"tx,omitempty"`
@@ -1512,6 +1521,8 @@ func serverConfigFromEnv() serverConfig {
 		StrictP2P:   getEnvBoolOrDefault("TENDER_STRICT_P2P", true),
 		BootstrapPeers: getEnvOrDefault("TENDER_BOOTSTRAP_PEERS", ""),
 		AdvertiseAddr:  getEnvOrDefault("TENDER_ADVERTISE_ADDR", ""),
+		RelayURL:       getEnvOrDefault("TENDER_RELAY_URL", ""),
+		NodeID:         getEnvOrDefault("TENDER_NODE_ID", ""),
 	}
 	return cfg
 }
@@ -1556,6 +1567,8 @@ func main() {
 	genesisPath := flag.String("genesis", "", "Path to genesis JSON file for initial state")
 	p2pBackend := flag.String("p2p-backend", "tcp", "P2P backend: tcp or libp2p")
 	p2pAdvertise := flag.String("p2p-advertise", "", "Public address advertised to peers (host:port)")
+	relayURL := flag.String("relay-url", "", "Cloudflare Worker relay URL for HTTP P2P transport")
+	nodeID := flag.String("node-id", "", "Unique node identifier used with the relay")
 	flag.Parse()
 
 	envCfg := serverConfigFromEnv()
@@ -1586,6 +1599,12 @@ func main() {
 	if *p2pAdvertise != "" {
 		envCfg.AdvertiseAddr = *p2pAdvertise
 	}
+	if *relayURL != "" {
+		envCfg.RelayURL = *relayURL
+	}
+	if *nodeID != "" {
+		envCfg.NodeID = *nodeID
+	}
 	if envCfg.APIKey == "" {
 		log.Fatal("API key must be set via --api-key or TENDER_API_KEY env var")
 	}
@@ -1604,7 +1623,7 @@ func main() {
 			log.Fatal("sealed-mode integrity check failed")
 		}
 	}
-	p2p := &P2PNode{addr: fmt.Sprintf("0.0.0.0:%d", envCfg.P2PPort), advertiseAddr: envCfg.AdvertiseAddr, peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 50, strictMode: envCfg.StrictP2P, seenMsgIDs: make(map[string]time.Time), peerConns: make(map[string]net.Conn), peerWriters: make(map[string]*bufio.Writer), dialBackoff: make(map[string]time.Time), helloReplies: make(map[string]time.Time)}
+	p2p := &P2PNode{addr: fmt.Sprintf("0.0.0.0:%d", envCfg.P2PPort), advertiseAddr: envCfg.AdvertiseAddr, peers: []string{}, peerScores: make(map[string]int), trustedPeers: make(map[string]bool), chain: chain, shutdown: make(chan struct{}), maxPeers: 50, strictMode: envCfg.StrictP2P, seenMsgIDs: make(map[string]time.Time), peerConns: make(map[string]net.Conn), peerWriters: make(map[string]*bufio.Writer), dialBackoff: make(map[string]time.Time), helloReplies: make(map[string]time.Time), relayURL: envCfg.RelayURL, nodeID: envCfg.NodeID}
 	if *peer != "" {
 		p2p.peers = append(p2p.peers, *peer)
 	}
@@ -1650,6 +1669,9 @@ func main() {
 			p2p.connectToPeers()
 		}
 	}()
+	if p2p.relayURL != "" {
+		go p2p.startRelaySync()
+	}
 	go startAPI(chain, envCfg.APIPort, p2p, envCfg)
 
 	log.Printf("{\"event\":\"node_start\",\"currency\":\"%s\",\"api_port\":%d,\"p2p_port\":%d,\"consensus\":\"%s\",\"chain_id\":\"%s\"}", CurrencyName, envCfg.APIPort, envCfg.P2PPort, envCfg.Consensus, *chainID)
@@ -2464,117 +2486,122 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 			log.Printf("{\"event\":\"p2p_decode\",\"error\":\"%v\"}", err)
 			return
 		}
-		if msg.StreamID != "" && p2p.seenMessageID(msg.StreamID) {
-			continue
+		replies := p2p.processMessage(msg, remote, conn)
+		for _, reply := range replies {
+			_ = p2p.writeMessage(conn, reply)
 		}
-		if msg.Type == "block" && msg.Block != nil {
-			if msg.State != nil {
-				p2p.chain.applyLedgerState(msg.State)
-			}
-			if len(msg.Chain) > 0 {
-				if p2p.chain.replaceChain(msg.Chain) {
-					continue
-				}
-			}
-			p2p.chain.mu.Lock()
-			if len(p2p.chain.Chain) > 0 && int(msg.Block.Index) == len(p2p.chain.Chain) && p2p.chain.Chain[len(p2p.chain.Chain)-1].BlockHash == msg.Block.PreviousHash {
-				p2p.chain.Chain = append(p2p.chain.Chain, *msg.Block)
-				_ = p2p.chain.saveToDisk()
-			}
-			p2p.chain.mu.Unlock()
-			relayPayload := mustMarshal(msg)
-			for _, peer := range p2p.peers {
-				if peer == "" || peer == p2p.addr || peer == remote || !p2p.trustedPeers[peer] {
-					continue
-				}
-				if msg.StreamID != "" && p2p.seenMessageID(msg.StreamID) {
-					continue
-				}
-				_ = p2p.writePeer(peer, relayPayload)
-			}
-		}
-		if msg.Type == "tx" && msg.Tx != nil {
-			p2p.chain.EnqueueTransaction(*msg.Tx)
-			relayPayload := mustMarshal(msg)
-			for _, peer := range p2p.peers {
-				if peer == "" || peer == p2p.addr || peer == remote || !p2p.trustedPeers[peer] {
-					continue
-				}
-				if msg.StreamID != "" && p2p.seenMessageID(msg.StreamID) {
-					continue
-				}
-				_ = p2p.writePeer(peer, relayPayload)
-			}
-		}
-		if msg.Type == "state" && msg.State != nil {
-			p2p.chain.applyLedgerState(msg.State)
-			relayPayload := mustMarshal(msg)
-			for _, peer := range p2p.peers {
-				if peer == "" || peer == p2p.addr || peer == remote || !p2p.trustedPeers[peer] {
-					continue
-				}
-				if msg.StreamID != "" && p2p.seenMessageID(msg.StreamID) {
-					continue
-				}
-				_ = p2p.writePeer(peer, relayPayload)
-			}
-		}
-		if msg.Type == "hello" && msg.Peer != nil {
-			if p2p.strictMode && len(p2p.peers) >= p2p.maxPeers {
+	}
+}
+
+// processMessage applies a P2P message to local state, relays it to other
+// TCP peers, and returns any reply messages to send back to the sender.
+// It is shared by the raw TCP handler and the Cloudflare HTTP relay so that
+// both transports stay consistent. When conn is nil (relay transport), no
+// direct peer conn registration is performed.
+func (p2p *P2PNode) processMessage(msg p2pMessage, remote string, conn net.Conn) []p2pMessage {
+	var replies []p2pMessage
+	if msg.StreamID != "" && p2p.seenMessageID(msg.StreamID) {
+		return replies
+	}
+	relayPayload := mustMarshal(msg)
+	relayToPeers := func() {
+		for _, peer := range p2p.peers {
+			if peer == "" || peer == p2p.addr || peer == remote || !p2p.trustedPeers[peer] {
 				continue
 			}
-			if msg.Peer.Address != "" && msg.Peer.Address != p2p.addr && msg.Peer.Address != p2p.advertisedAddr() {
-				if p2p.strictMode && msg.Peer.ValidatorPubKey != "" {
-					if !p2p.chain.isActiveValidatorPubKey(msg.Peer.ValidatorPubKey) {
-						continue
-					}
+			if msg.StreamID != "" && p2p.seenMessageID(msg.StreamID) {
+				continue
+			}
+			_ = p2p.writePeer(peer, relayPayload)
+		}
+	}
+	if msg.Type == "block" && msg.Block != nil {
+		if msg.State != nil {
+			p2p.chain.applyLedgerState(msg.State)
+		}
+		if len(msg.Chain) > 0 {
+			if p2p.chain.replaceChain(msg.Chain) {
+				return replies
+			}
+		}
+		p2p.chain.mu.Lock()
+		if len(p2p.chain.Chain) > 0 && int(msg.Block.Index) == len(p2p.chain.Chain) && p2p.chain.Chain[len(p2p.chain.Chain)-1].BlockHash == msg.Block.PreviousHash {
+			p2p.chain.Chain = append(p2p.chain.Chain, *msg.Block)
+			_ = p2p.chain.saveToDisk()
+		}
+		p2p.chain.mu.Unlock()
+		relayToPeers()
+		return replies
+	}
+	if msg.Type == "tx" && msg.Tx != nil {
+		p2p.chain.EnqueueTransaction(*msg.Tx)
+		relayToPeers()
+		return replies
+	}
+	if msg.Type == "state" && msg.State != nil {
+		p2p.chain.applyLedgerState(msg.State)
+		relayToPeers()
+		return replies
+	}
+	if msg.Type == "hello" && msg.Peer != nil {
+		if p2p.strictMode && len(p2p.peers) >= p2p.maxPeers {
+			return replies
+		}
+		if msg.Peer.Address != "" && msg.Peer.Address != p2p.addr && msg.Peer.Address != p2p.advertisedAddr() {
+			if p2p.strictMode && msg.Peer.ValidatorPubKey != "" {
+				if !p2p.chain.isActiveValidatorPubKey(msg.Peer.ValidatorPubKey) {
+					return replies
 				}
-				known := false
-				for _, existing := range p2p.peers {
-					if existing == msg.Peer.Address {
-						known = true
-						break
-					}
+			}
+			known := false
+			for _, existing := range p2p.peers {
+				if existing == msg.Peer.Address {
+					known = true
+					break
 				}
-				p2p.peerScores[msg.Peer.Address] = 1
-				p2p.trustedPeers[msg.Peer.Address] = true
-				if !known {
-					p2p.peers = append(p2p.peers, msg.Peer.Address)
-				}
+			}
+			p2p.peerScores[msg.Peer.Address] = 1
+			p2p.trustedPeers[msg.Peer.Address] = true
+			if !known {
+				p2p.peers = append(p2p.peers, msg.Peer.Address)
+			}
+			if conn != nil {
 				p2p.peerMu.Lock()
 				p2p.peerConns[msg.Peer.Address] = conn
 				p2p.peerWriters[msg.Peer.Address] = bufio.NewWriter(conn)
 				p2p.peerMu.Unlock()
-				reply := !known
-				if last, ok := p2p.helloReplies[msg.Peer.Address]; !ok || time.Since(last) > 20*time.Second {
-					p2p.helloReplies[msg.Peer.Address] = time.Now()
-					reply = true
+			}
+			reply := !known
+			if last, ok := p2p.helloReplies[msg.Peer.Address]; !ok || time.Since(last) > 20*time.Second {
+				p2p.helloReplies[msg.Peer.Address] = time.Now()
+				reply = true
+			}
+			if reply {
+				var pubKey string
+				if p2p.chain != nil {
+					pubKey = p2p.chain.selectValidatorPubKey()
 				}
-				if reply {
-					var pubKey string
-					if p2p.chain != nil {
-						pubKey = p2p.chain.selectValidatorPubKey()
-					}
-					_ = p2p.writeMessage(conn, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.advertisedAddr(), Peers: p2p.peers, ValidatorPubKey: pubKey, Height: uint64(len(p2p.chain.Chain))}})
-					p2p.chain.mu.RLock()
-					chainCopy := make([]Block, len(p2p.chain.Chain))
-					copy(chainCopy, p2p.chain.Chain)
-					p2p.chain.mu.RUnlock()
-					if len(chainCopy) > 0 {
-						_ = p2p.writeMessage(conn, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, State: p2p.chain.ledgerState(), StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
-					}
-				} else if p2p.chain != nil && msg.Peer.Height < uint64(len(p2p.chain.Chain)) {
-					p2p.chain.mu.RLock()
-					chainCopy := make([]Block, len(p2p.chain.Chain))
-					copy(chainCopy, p2p.chain.Chain)
-					p2p.chain.mu.RUnlock()
-					if len(chainCopy) > 0 {
-						_ = p2p.writeMessage(conn, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, State: p2p.chain.ledgerState(), StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
-					}
+				replies = append(replies, p2pMessage{Type: "hello", From: p2p.addr, Peer: &NodeInfo{Address: p2p.advertisedAddr(), Peers: p2p.peers, ValidatorPubKey: pubKey, Height: uint64(len(p2p.chain.Chain))}})
+				p2p.chain.mu.RLock()
+				chainCopy := make([]Block, len(p2p.chain.Chain))
+				copy(chainCopy, p2p.chain.Chain)
+				p2p.chain.mu.RUnlock()
+				if len(chainCopy) > 0 {
+					replies = append(replies, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, State: p2p.chain.ledgerState(), StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
+				}
+			} else if p2p.chain != nil && msg.Peer.Height < uint64(len(p2p.chain.Chain)) {
+				p2p.chain.mu.RLock()
+				chainCopy := make([]Block, len(p2p.chain.Chain))
+				copy(chainCopy, p2p.chain.Chain)
+				p2p.chain.mu.RUnlock()
+				if len(chainCopy) > 0 {
+					replies = append(replies, p2pMessage{Type: "block", Block: &chainCopy[len(chainCopy)-1], Chain: chainCopy, State: p2p.chain.ledgerState(), StreamID: fmt.Sprintf("sync-%d", time.Now().UnixNano())})
 				}
 			}
 		}
+		return replies
 	}
+	return replies
 }
 
 func (p2p *P2PNode) broadcastTransaction(tx Transaction) {
@@ -2604,6 +2631,97 @@ func (p2p *P2PNode) broadcastMessage(msg p2pMessage) {
 			continue
 		}
 		_ = p2p.writePeer(peer, payload)
+	}
+	if p2p.relayURL != "" {
+		p2p.relayPush(msg)
+	}
+}
+
+// relayPush forwards a message to the Cloudflare Worker relay, which queues
+// it for every other registered node. A non-empty To routes only to that node.
+func (p2p *P2PNode) relayPush(msg p2pMessage) {
+	if p2p.relayURL == "" {
+		return
+	}
+	msg.NodeID = p2p.nodeID
+	msg.From = p2p.nodeID
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	endpoint := p2p.relayURL + "/push?node=" + url.QueryEscape(p2p.nodeID)
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("{\"event\":\"relay_push\",\"error\":\"%v\"}", err)
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+}
+
+// startRelaySync polls the relay for messages queued for this node and applies
+// them through the shared processMessage path. Replies (e.g. hello + chain)
+// are pushed back to the originating node.
+func (p2p *P2PNode) startRelaySync() {
+	p2p.announceRelay()
+	for {
+		time.Sleep(2 * time.Second)
+		p2p.relayPollOnce()
+	}
+}
+
+// announceRelay broadcasts a hello over the relay so remote nodes learn about
+// this node even when direct TCP connectivity is unavailable.
+func (p2p *P2PNode) announceRelay() {
+	if p2p.relayURL == "" {
+		return
+	}
+	var pubKey string
+	if p2p.chain != nil {
+		pubKey = p2p.chain.selectValidatorPubKey()
+	}
+	msg := p2pMessage{Type: "hello", Peer: &NodeInfo{Address: p2p.advertisedAddr(), Peers: p2p.peers, ValidatorPubKey: pubKey, Height: uint64(len(p2p.chain.Chain))}}
+	msg.StreamID = fmt.Sprintf("announce-%d", time.Now().UnixNano())
+	p2p.relayPush(msg)
+}
+
+func (p2p *P2PNode) relayPollOnce() {
+	if p2p.relayURL == "" {
+		return
+	}
+	p2p.relayMu.Lock()
+	defer p2p.relayMu.Unlock()
+	if time.Since(p2p.relayLastPull) < time.Second {
+		return
+	}
+	p2p.relayLastPull = time.Now()
+	endpoint := p2p.relayURL + "/pull?node=" + url.QueryEscape(p2p.nodeID)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		log.Printf("{\"event\":\"relay_pull\",\"error\":\"%v\"}", err)
+		return
+	}
+	defer resp.Body.Close()
+	var msgs []p2pMessage
+	if err := json.NewDecoder(resp.Body).Decode(&msgs); err != nil {
+		return
+	}
+	for _, msg := range msgs {
+		if msg.NodeID == p2p.nodeID {
+			continue
+		}
+		replies := p2p.processMessage(msg, "relay:"+msg.NodeID, nil)
+		for _, reply := range replies {
+			reply.To = msg.NodeID
+			p2p.relayPush(reply)
+		}
 	}
 }
 

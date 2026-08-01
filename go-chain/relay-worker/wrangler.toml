@@ -1,0 +1,14 @@
+name = "tender-relay"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayDO"]
+
+[observability]
+enabled = true
