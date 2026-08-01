@@ -2431,6 +2431,10 @@ func (p2p *P2PNode) handleConn(conn net.Conn) {
 				if !known {
 					p2p.peers = append(p2p.peers, msg.Peer.Address)
 				}
+				p2p.peerMu.Lock()
+				p2p.peerConns[msg.Peer.Address] = conn
+				p2p.peerWriters[msg.Peer.Address] = bufio.NewWriter(conn)
+				p2p.peerMu.Unlock()
 				reply := !known
 				if last, ok := p2p.helloReplies[msg.Peer.Address]; !ok || time.Since(last) > 20*time.Second {
 					p2p.helloReplies[msg.Peer.Address] = time.Now()
