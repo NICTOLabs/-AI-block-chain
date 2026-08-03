@@ -2,14 +2,14 @@ package blockchain
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
 	"net/http"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"sort"
@@ -31,78 +31,78 @@ type serverMetrics struct {
 }
 
 type Blockchain struct {
-	mu              sync.RWMutex
-	Chain           []Block
-	Pending         []Transaction
-	Ledger          map[string]*Account
-	Registry        map[string]ModelRef
-	Consensus       ConsensusType
-	Authorities     []string
-	validatorIdx    int
-	DataDir         string
-	TokenSupply     uint64
-	Escrows         map[string]Escrow
-	Proposals       map[string]GovernanceProposal
-	Agreements      map[string]ServiceAgreement
-	UsageMeters     map[string]UsageMeter
-	UsedNonces      map[string]map[uint64]struct{}
-	NextNonce       map[string]uint64
-	SeenTxIDs       map[string]struct{}
-	AuditTrail      []AuditEntry
-	Wallets         map[string]ManagedWallet
-	Validators      map[string]Validator
-	GenesisHash     string
-	ChainID         string
-	BlockTime       time.Duration
-	Difficulty      uint32
-	FinalizedBlocks map[uint64]struct{}
-	LastFinalized   uint64
-	AgentTxCount    uint64
-	MintPaused      bool
-	MintPauseUntil  int64
-	FinalityVotes   map[uint64]map[string]struct{}
+	mu                 sync.RWMutex
+	Chain              []Block
+	Pending            []Transaction
+	Ledger             map[string]*Account
+	Registry           map[string]ModelRef
+	Consensus          ConsensusType
+	Authorities        []string
+	validatorIdx       int
+	DataDir            string
+	TokenSupply        uint64
+	Escrows            map[string]Escrow
+	Proposals          map[string]GovernanceProposal
+	Agreements         map[string]ServiceAgreement
+	UsageMeters        map[string]UsageMeter
+	UsedNonces         map[string]map[uint64]struct{}
+	NextNonce          map[string]uint64
+	SeenTxIDs          map[string]struct{}
+	AuditTrail         []AuditEntry
+	Wallets            map[string]ManagedWallet
+	Validators         map[string]Validator
+	GenesisHash        string
+	ChainID            string
+	BlockTime          time.Duration
+	Difficulty         uint32
+	FinalizedBlocks    map[uint64]struct{}
+	LastFinalized      uint64
+	AgentTxCount       uint64
+	MintPaused         bool
+	MintPauseUntil     int64
+	FinalityVotes      map[uint64]map[string]struct{}
 	FinalitySignatures map[uint64][]FinalityVoteSignature
-	MinerStats      map[string]*MinerStats
-	UniversalWallets map[string]UniversalWallet
-	PendingReversals map[string]PendingReversal
-	IrreversibleTxs map[string]struct{}
-	tendermintEngine *TendermintEngine
-	metrics         *serverMetrics
+	MinerStats         map[string]*MinerStats
+	UniversalWallets   map[string]UniversalWallet
+	PendingReversals   map[string]PendingReversal
+	IrreversibleTxs    map[string]struct{}
+	tendermintEngine   *TendermintEngine
+	metrics            *serverMetrics
 }
 
 func NewBlockchain(consensus ConsensusType, dataDir string, chainID string) *Blockchain {
 	bc := &Blockchain{
-		Chain:           []Block{},
-		Pending:         []Transaction{},
-		Ledger:          make(map[string]*Account),
-		Registry:        make(map[string]ModelRef),
-		Consensus:       consensus,
-		Authorities:     []string{},
-		DataDir:         dataDir,
-		TokenSupply:     1_000_000_000,
-		Escrows:         make(map[string]Escrow),
-		Proposals:       make(map[string]GovernanceProposal),
-		Agreements:      make(map[string]ServiceAgreement),
-		UsageMeters:     make(map[string]UsageMeter),
-		UsedNonces:      make(map[string]map[uint64]struct{}),
-		NextNonce:       make(map[string]uint64),
-		SeenTxIDs:       make(map[string]struct{}),
-		AuditTrail:      []AuditEntry{},
-		Wallets:         make(map[string]ManagedWallet),
-		Validators:      make(map[string]Validator),
-		ChainID:         chainID,
-		BlockTime:       time.Second * 5,
-		Difficulty:      16,
-		FinalizedBlocks: make(map[uint64]struct{}),
-		FinalityVotes:   make(map[uint64]map[string]struct{}),
+		Chain:              []Block{},
+		Pending:            []Transaction{},
+		Ledger:             make(map[string]*Account),
+		Registry:           make(map[string]ModelRef),
+		Consensus:          consensus,
+		Authorities:        []string{},
+		DataDir:            dataDir,
+		TokenSupply:        1_000_000_000,
+		Escrows:            make(map[string]Escrow),
+		Proposals:          make(map[string]GovernanceProposal),
+		Agreements:         make(map[string]ServiceAgreement),
+		UsageMeters:        make(map[string]UsageMeter),
+		UsedNonces:         make(map[string]map[uint64]struct{}),
+		NextNonce:          make(map[string]uint64),
+		SeenTxIDs:          make(map[string]struct{}),
+		AuditTrail:         []AuditEntry{},
+		Wallets:            make(map[string]ManagedWallet),
+		Validators:         make(map[string]Validator),
+		ChainID:            chainID,
+		BlockTime:          time.Second * 5,
+		Difficulty:         16,
+		FinalizedBlocks:    make(map[uint64]struct{}),
+		FinalityVotes:      make(map[uint64]map[string]struct{}),
 		FinalitySignatures: make(map[uint64][]FinalityVoteSignature),
-		LastFinalized:   0,
-		AgentTxCount:    0,
-		MinerStats:      make(map[string]*MinerStats),
-		UniversalWallets: make(map[string]UniversalWallet),
-		PendingReversals: make(map[string]PendingReversal),
-		IrreversibleTxs: make(map[string]struct{}),
-		metrics:         &serverMetrics{},
+		LastFinalized:      0,
+		AgentTxCount:       0,
+		MinerStats:         make(map[string]*MinerStats),
+		UniversalWallets:   make(map[string]UniversalWallet),
+		PendingReversals:   make(map[string]PendingReversal),
+		IrreversibleTxs:    make(map[string]struct{}),
+		metrics:            &serverMetrics{},
 	}
 	bc.createGenesisBlock()
 	_ = os.MkdirAll(dataDir, 0o755)
@@ -136,30 +136,30 @@ func (bc *Blockchain) createGenesisBlock() {
 
 func (bc *Blockchain) SaveToDisk() error {
 	state := nodeState{
-		Chain:           bc.Chain,
-		Pending:         bc.Pending,
-		Ledger:          bc.Ledger,
-		Registry:        bc.Registry,
-		Consensus:       ConsensusName(bc.Consensus),
-		Authorities:     bc.Authorities,
-		TokenSupply:     bc.TokenSupply,
-		Escrows:         bc.Escrows,
-		Proposals:       bc.Proposals,
-		Agreements:      bc.Agreements,
-		UsageMeters:     bc.UsageMeters,
-		UsedNonces:      bc.UsedNonces,
-		SeenTxIDs:       bc.SeenTxIDs,
-		AuditTrail:      bc.AuditTrail,
-		NextNonce:       bc.NextNonce,
-		FinalizedBlocks: bc.FinalizedBlocks,
-		LastFinalized:   bc.LastFinalized,
-		AgentTxCount:    bc.AgentTxCount,
-		MintPaused:      bc.MintPaused,
-		MintPauseUntil:  bc.MintPauseUntil,
-		UniversalWallets: bc.UniversalWallets,
+		Chain:              bc.Chain,
+		Pending:            bc.Pending,
+		Ledger:             bc.Ledger,
+		Registry:           bc.Registry,
+		Consensus:          ConsensusName(bc.Consensus),
+		Authorities:        bc.Authorities,
+		TokenSupply:        bc.TokenSupply,
+		Escrows:            bc.Escrows,
+		Proposals:          bc.Proposals,
+		Agreements:         bc.Agreements,
+		UsageMeters:        bc.UsageMeters,
+		UsedNonces:         bc.UsedNonces,
+		SeenTxIDs:          bc.SeenTxIDs,
+		AuditTrail:         bc.AuditTrail,
+		NextNonce:          bc.NextNonce,
+		FinalizedBlocks:    bc.FinalizedBlocks,
+		LastFinalized:      bc.LastFinalized,
+		AgentTxCount:       bc.AgentTxCount,
+		MintPaused:         bc.MintPaused,
+		MintPauseUntil:     bc.MintPauseUntil,
+		UniversalWallets:   bc.UniversalWallets,
 		FinalitySignatures: bc.FinalitySignatures,
-		PendingReversals: bc.PendingReversals,
-		IrreversibleTxs: bc.IrreversibleTxs,
+		PendingReversals:   bc.PendingReversals,
+		IrreversibleTxs:    bc.IrreversibleTxs,
 	}
 	payload, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -355,7 +355,7 @@ func (bc *Blockchain) UniversalTransfer(fromWallet, toName, currency string, amo
 	bcfAcct.Balance += amount
 	tx := Transaction{
 		From: fromWallet, To: to.Address, Amount: amount, Fee: 1,
-		ChainID: bc.ChainID,
+		ChainID:   bc.ChainID,
 		Timestamp: time.Now().Unix(), TxType: Transfer,
 		Nonce: bc.NextNonce[fromWallet],
 	}
@@ -539,13 +539,13 @@ func (bc *Blockchain) ProcessReversals(block Block) {
 		case RequestReversal:
 			if _, exists := bc.PendingReversals[tx.Payload]; !exists {
 				bc.PendingReversals[tx.Payload] = PendingReversal{
-					ID: tx.ID,
+					ID:           tx.ID,
 					OriginalTxID: tx.Payload,
-					From: tx.From,
-					To: tx.To,
-					Amount: tx.Amount,
-					Requester: tx.From,
-					Status: "requested",
+					From:         tx.From,
+					To:           tx.To,
+					Amount:       tx.Amount,
+					Requester:    tx.From,
+					Status:       "requested",
 					Irreversible: false,
 				}
 				bc.appendAuditEntry("reversal_requested", tx.From, fmt.Sprintf("original_tx=%s amount=%d", tx.Payload, tx.Amount))
@@ -577,7 +577,6 @@ func (bc *Blockchain) MarkIrreversible(txID string) {
 	defer bc.mu.Unlock()
 	bc.IrreversibleTxs[txID] = struct{}{}
 }
-
 
 func (bc *Blockchain) DistributeRewards() {
 	bc.mu.Lock()
@@ -871,24 +870,24 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 				atomic.AddInt64(&bc.metrics.txRejected, 1)
 				continue
 			}
-		if tx.Fee > 0 {
-			burnRate := BurnRatePercent
-			if isAITransaction(tx.TxType) && bc.AgentTxCount > 0 && bc.TokenSupply > 0 {
-				burnRate += AIBurnScaling
+			if tx.Fee > 0 {
+				burnRate := BurnRatePercent
+				if isAITransaction(tx.TxType) && bc.AgentTxCount > 0 && bc.TokenSupply > 0 {
+					burnRate += AIBurnScaling
+				}
+				totalBurn := tx.Fee * burnRate / 100
+				permanentBurn := totalBurn * 70 / 100
+				communityFund := totalBurn - permanentBurn
+				if permanentBurn > bc.TokenSupply {
+					permanentBurn = bc.TokenSupply
+				}
+				bc.TokenSupply -= permanentBurn
+				if cfAcct := bc.Ledger[CommunityFundAddress]; cfAcct != nil {
+					cfAcct.Balance += communityFund
+				} else {
+					bc.Ledger[CommunityFundAddress] = &Account{Address: CommunityFundAddress, Balance: communityFund, Staked: 0, IsAgent: false}
+				}
 			}
-			totalBurn := tx.Fee * burnRate / 100
-			permanentBurn := totalBurn * 70 / 100
-			communityFund := totalBurn - permanentBurn
-			if permanentBurn > bc.TokenSupply {
-				permanentBurn = bc.TokenSupply
-			}
-			bc.TokenSupply -= permanentBurn
-			if cfAcct := bc.Ledger[CommunityFundAddress]; cfAcct != nil {
-				cfAcct.Balance += communityFund
-			} else {
-				bc.Ledger[CommunityFundAddress] = &Account{Address: CommunityFundAddress, Balance: communityFund, Staked: 0, IsAgent: false}
-			}
-		}
 			block.Transactions = append(block.Transactions, tx)
 			bc.markTransactionSeen(tx)
 			atomic.AddInt64(&bc.EnsureMetrics().txAccepted, 1)
@@ -903,40 +902,40 @@ func (bc *Blockchain) MineBlockFor(minerAddress string) (*Block, error) {
 	if err := bc.validateBlock(block, bc.Chain[len(bc.Chain)-1]); err != nil {
 		return nil, err
 	}
-		blockReward := bc.MineRewardFor(author)
-		if account := bc.Ledger[author]; account != nil {
-			account.Balance += blockReward
-			bc.TokenSupply += blockReward
-		}
-		bc.applyBlock(block)
-		bc.Chain = append(bc.Chain, block)
-		bc.rotateValidatorKeysLocked(time.Now().Unix())
-		if bc.Consensus != ProofOfWork && bc.tendermintEngine != nil {
-			proposal, _ := bc.tendermintEngine.ProcessProposal(block, author)
-			_ = proposal
-			_, _ = bc.tendermintEngine.Prevote(block.BlockHash)
-			vote, _ := bc.tendermintEngine.Precommit(block.BlockHash)
-			if vote.BlockHash != "" {
-				_ = bc.tendermintEngine.Commit(vote.BlockHash)
-				_ = bc.tendermintEngine.FinalizeBlock(block)
-			}
-			bc.tendermintEngine.AdvanceHeight()
-		}
-		if bc.AgentTxCount > 0 {
-			bc.treasuryBuybackLocked()
-		}
-		bc.Pending = []Transaction{}
-		bc.adjustDifficulty()
-		bc.RecordMinerSubmission(author)
-		bc.NoteMinedBlock(author)
-		bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d miner=%s reward=%d", block.Index, len(block.Transactions), author, blockReward))
-		atomic.AddInt64(&bc.EnsureMetrics().blocksMined, 1)
-		if err := bc.SaveToDisk(); err != nil {
-			return nil, err
-		}
-		_ = bc.NotifyBridgeRelayer(&block)
-		return &block, nil
+	blockReward := bc.MineRewardFor(author)
+	if account := bc.Ledger[author]; account != nil {
+		account.Balance += blockReward
+		bc.TokenSupply += blockReward
 	}
+	bc.applyBlock(block)
+	bc.Chain = append(bc.Chain, block)
+	bc.rotateValidatorKeysLocked(time.Now().Unix())
+	if bc.Consensus != ProofOfWork && bc.tendermintEngine != nil {
+		proposal, _ := bc.tendermintEngine.ProcessProposal(block, author)
+		_ = proposal
+		_, _ = bc.tendermintEngine.Prevote(block.BlockHash)
+		vote, _ := bc.tendermintEngine.Precommit(block.BlockHash)
+		if vote.BlockHash != "" {
+			_ = bc.tendermintEngine.Commit(vote.BlockHash)
+			_ = bc.tendermintEngine.FinalizeBlock(block)
+		}
+		bc.tendermintEngine.AdvanceHeight()
+	}
+	if bc.AgentTxCount > 0 {
+		bc.treasuryBuybackLocked()
+	}
+	bc.Pending = []Transaction{}
+	bc.adjustDifficulty()
+	bc.RecordMinerSubmission(author)
+	bc.NoteMinedBlock(author)
+	bc.appendAuditEntry("block_mined", author, fmt.Sprintf("index=%d txs=%d miner=%s reward=%d", block.Index, len(block.Transactions), author, blockReward))
+	atomic.AddInt64(&bc.EnsureMetrics().blocksMined, 1)
+	if err := bc.SaveToDisk(); err != nil {
+		return nil, err
+	}
+	_ = bc.NotifyBridgeRelayer(&block)
+	return &block, nil
+}
 
 func (bc *Blockchain) SelectValidatorPubKey() string {
 	bc.mu.RLock()
@@ -1010,8 +1009,9 @@ func (bc *Blockchain) SelectValidator() string {
 
 func (bc *Blockchain) proofOfWork(block Block) Block {
 	block.TxMerkleRoot = CalculateMerkleRoot(block.Transactions)
+	difficulty := bc.minerDifficulty(block.MinerAddress)
 	target := new(big.Int)
-	target.Lsh(big.NewInt(1), 256-uint(bc.Difficulty))
+	target.Lsh(big.NewInt(1), 256-uint(difficulty))
 	for {
 		hash := calculateHash(block)
 		hashVal := new(big.Int)
@@ -1229,18 +1229,18 @@ func (bc *Blockchain) Snapshot() nodeState {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 	return nodeState{
-		Chain:           append([]Block(nil), bc.Chain...),
-		Pending:         append([]Transaction(nil), bc.Pending...),
-		Ledger:          bc.Ledger,
-		Registry:        bc.Registry,
-		Consensus:       ConsensusName(bc.Consensus),
-		Authorities:     append([]string(nil), bc.Authorities...),
-		TokenSupply:     bc.TokenSupply,
-		Escrows:         bc.Escrows,
-		Proposals:       bc.Proposals,
-		Agreements:      bc.Agreements,
-		UsageMeters:     bc.UsageMeters,
-		NextNonce:       bc.NextNonce,
+		Chain:       append([]Block(nil), bc.Chain...),
+		Pending:     append([]Transaction(nil), bc.Pending...),
+		Ledger:      bc.Ledger,
+		Registry:    bc.Registry,
+		Consensus:   ConsensusName(bc.Consensus),
+		Authorities: append([]string(nil), bc.Authorities...),
+		TokenSupply: bc.TokenSupply,
+		Escrows:     bc.Escrows,
+		Proposals:   bc.Proposals,
+		Agreements:  bc.Agreements,
+		UsageMeters: bc.UsageMeters,
+		NextNonce:   bc.NextNonce,
 	}
 }
 
@@ -1467,7 +1467,23 @@ func (bc *Blockchain) collectFinalityVotesLocked(blockIndex uint64) {
 	}
 }
 
+const oneWeekSeconds = 604_800
 const twoWeekSeconds = 1_209_600
+
+func monthIdentifier(ts int64) int {
+	t := time.Unix(ts, 0).UTC()
+	return t.Year()*12 + int(t.Month())
+}
+
+func yearIdentifier(ts int64) int {
+	return time.Unix(ts, 0).UTC().Year()
+}
+
+func yearEndTimestamp(ts int64) int64 {
+	t := time.Unix(ts, 0).UTC()
+	endOfYear := time.Date(t.Year()+1, time.January, 1, 0, 0, 0, 0, time.UTC)
+	return endOfYear.Unix()
+}
 
 func (bc *Blockchain) IsActiveValidatorPubKey(pubKey string) bool {
 	bc.mu.RLock()
@@ -1505,20 +1521,75 @@ func (bc *Blockchain) MineRewardFor(miner string) uint64 {
 		bc.MinerStats[miner] = stats
 	}
 	now := time.Now().Unix()
+	currentMonth := monthIdentifier(now)
+	currentYear := yearIdentifier(now)
+	if stats.CurrentYear == 0 {
+		stats.CurrentYear = currentYear
+	}
+	if stats.CurrentMonth == 0 {
+		stats.CurrentMonth = currentMonth
+	}
+	if stats.CurrentYear != currentYear {
+		stats.CurrentYear = currentYear
+		stats.YearlyRewards = 0
+		stats.YearlyPauseUntil = 0
+		stats.MonthlyRewards = 0
+		stats.PersonalDifficulty = bc.Difficulty
+	}
+	if stats.CurrentMonth != currentMonth {
+		stats.CurrentMonth = currentMonth
+		stats.MonthlyRewards = 0
+		stats.PersonalDifficulty = bc.Difficulty
+	}
+	if stats.YearlyPauseUntil > 0 && now < stats.YearlyPauseUntil {
+		return 0
+	}
 	if stats.LastRewardBlock == 0 {
+		stats.MonthlyRewards = 1
+		stats.YearlyRewards = 1
 		stats.LastRewardBlock = uint64(now)
 		stats.LastSubmissionTime = now
-		stats.BlocksSubmitted = 1
+		stats.BlocksSubmitted++
+		stats.PersonalDifficulty = bc.Difficulty + 8
 		return 1
 	}
 	elapsed := now - stats.LastSubmissionTime
 	if elapsed < 0 {
 		elapsed = 0
 	}
-	if elapsed < twoWeekSeconds {
-		stats.AcceleratorCount++
+	switch stats.MonthlyRewards {
+	case 0:
+		if elapsed < oneWeekSeconds {
+			return 0
+		}
+		stats.MonthlyRewards = 1
+		stats.YearlyRewards++
+		stats.PersonalDifficulty = bc.Difficulty + 8
+	case 1:
+		if elapsed < twoWeekSeconds {
+			return 0
+		}
+		stats.MonthlyRewards = 2
+		stats.YearlyRewards++
+		stats.PersonalDifficulty = bc.Difficulty + 16
+	case 2:
+		// reward in a later month only
+		if stats.CurrentMonth == monthIdentifier(stats.LastSubmissionTime) {
+			return 0
+		}
+		if elapsed < oneWeekSeconds {
+			return 0
+		}
+		stats.MonthlyRewards = 1
+		stats.YearlyRewards++
+		stats.PersonalDifficulty = bc.Difficulty
+	default:
+		return 0
 	}
-	if elapsed < twoWeekSeconds {
+	if stats.YearlyRewards >= 3 {
+		stats.YearlyPauseUntil = yearEndTimestamp(now)
+	}
+	if stats.YearlyRewards > 3 {
 		return 0
 	}
 	if stats.BlocksSubmitted > 0 && stats.AcceleratorCount > 0 {
@@ -1570,12 +1641,12 @@ func (bc *Blockchain) NotifyBridgeRelayer(block *Block) error {
 		return nil
 	}
 	payload, err := json.Marshal(map[string]any{
-		"tx_hash":      block.BlockHash,
-		"from":         block.Author,
-		"amount":       uint64(0),
-		"recipient":    block.Author,
-		"block_index":  block.Index,
-		"block_hash":   block.BlockHash,
+		"tx_hash":     block.BlockHash,
+		"from":        block.Author,
+		"amount":      uint64(0),
+		"recipient":   block.Author,
+		"block_index": block.Index,
+		"block_hash":  block.BlockHash,
 	})
 	if err != nil {
 		return err

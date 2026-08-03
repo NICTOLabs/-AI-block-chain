@@ -2,11 +2,11 @@ package blockchain
 
 import (
 	"compress/gzip"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"crypto/ed25519"
-	"crypto/sha256"
-	"crypto/rand"
 	"fmt"
 	"io"
 	"os"
@@ -21,13 +21,13 @@ import (
 type TransactionType string
 
 const (
-	Transfer         TransactionType = "TRANSFER"
-	RegisterModel    TransactionType = "REGISTER_MODEL"
-	UpdateModel      TransactionType = "UPDATE_MODEL"
-	PurchaseApiKey   TransactionType = "PURCHASE_API_KEY"
-	RequestReversal  TransactionType = "REQUEST_REVERSAL"
-	ConfirmReversal  TransactionType = "CONFIRM_REVERSAL"
-	CommitReversal   TransactionType = "COMMIT_REVERSAL"
+	Transfer        TransactionType = "TRANSFER"
+	RegisterModel   TransactionType = "REGISTER_MODEL"
+	UpdateModel     TransactionType = "UPDATE_MODEL"
+	PurchaseApiKey  TransactionType = "PURCHASE_API_KEY"
+	RequestReversal TransactionType = "REQUEST_REVERSAL"
+	ConfirmReversal TransactionType = "CONFIRM_REVERSAL"
+	CommitReversal  TransactionType = "COMMIT_REVERSAL"
 )
 
 type Transaction struct {
@@ -65,13 +65,18 @@ type Account struct {
 }
 
 type MinerStats struct {
-	Address              string `json:"address"`
-	BlocksSubmitted      uint64 `json:"blocks_submitted"`
-	LastSubmissionTime   int64  `json:"last_submission_time"`
-	SubmittedLastHour    uint64 `json:"submitted_last_hour"`
-	PersonalDifficulty   uint32 `json:"personal_difficulty"`
-	AcceleratorCount     uint64 `json:"accelerator_count"`
-	LastRewardBlock      uint64 `json:"last_reward_block"`
+	Address            string `json:"address"`
+	BlocksSubmitted    uint64 `json:"blocks_submitted"`
+	LastSubmissionTime int64  `json:"last_submission_time"`
+	SubmittedLastHour  uint64 `json:"submitted_last_hour"`
+	PersonalDifficulty uint32 `json:"personal_difficulty"`
+	AcceleratorCount   uint64 `json:"accelerator_count"`
+	LastRewardBlock    uint64 `json:"last_reward_block"`
+	CurrentMonth       int    `json:"current_month"`
+	CurrentYear        int    `json:"current_year"`
+	MonthlyRewards     uint32 `json:"monthly_rewards"`
+	YearlyRewards      uint32 `json:"yearly_rewards"`
+	YearlyPauseUntil   int64  `json:"yearly_pause_until"`
 }
 
 type ModelRef struct {
@@ -91,42 +96,42 @@ const (
 )
 
 const (
-	HogohogoPerTender = 10_000_000
-	BaseFee           uint64 = 5 * HogohogoPerTender
-	FeeMultiplier     uint64 = 2
-	BurnRatePercent   uint64 = 1
-	AIBurnScaling     uint64 = 20
-	RewardRatePercent uint64 = 4
-	MinStake          uint64 = 100 * HogohogoPerTender
-	AIModelStake      uint64 = 50 * HogohogoPerTender
-	AgentMinBalance   uint64 = 10 * HogohogoPerTender
-	SlashPercent      uint64 = 10
-	CurrencyName      string = "TENDER"
-	CurrencySubunit   string = "HOGOHOGO"
-	MaxSupply         uint64 = 18_446_744_073_709_551_615
+	HogohogoPerTender           = 10_000_000
+	BaseFee              uint64 = 5 * HogohogoPerTender
+	FeeMultiplier        uint64 = 2
+	BurnRatePercent      uint64 = 1
+	AIBurnScaling        uint64 = 20
+	RewardRatePercent    uint64 = 4
+	MinStake             uint64 = 100 * HogohogoPerTender
+	AIModelStake         uint64 = 50 * HogohogoPerTender
+	AgentMinBalance      uint64 = 10 * HogohogoPerTender
+	SlashPercent         uint64 = 10
+	CurrencyName         string = "TENDER"
+	CurrencySubunit      string = "HOGOHOGO"
+	MaxSupply            uint64 = 18_446_744_073_709_551_615
 	CommunityFundAddress string = "tdr-community-fund-000000000000000000000000000000000000"
 )
 
 type Escrow struct {
-	ID        string `json:"id"`
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Amount    uint64 `json:"amount"`
-	ServiceID string `json:"service_id"`
-	Status    string `json:"status"`
-	Irreversible bool `json:"irreversible,omitempty"`
+	ID           string `json:"id"`
+	From         string `json:"from"`
+	To           string `json:"to"`
+	Amount       uint64 `json:"amount"`
+	ServiceID    string `json:"service_id"`
+	Status       string `json:"status"`
+	Irreversible bool   `json:"irreversible,omitempty"`
 }
 
 type PendingReversal struct {
-	ID            string `json:"id"`
-	OriginalTxID  string `json:"original_tx_id"`
-	From          string `json:"from"`
-	To            string `json:"to"`
-	Amount        uint64 `json:"amount"`
-	Requester     string `json:"requester"`
-	Confirmer     string `json:"confirmer"`
-	Status        string `json:"status"`
-	Irreversible  bool   `json:"irreversible"`
+	ID           string `json:"id"`
+	OriginalTxID string `json:"original_tx_id"`
+	From         string `json:"from"`
+	To           string `json:"to"`
+	Amount       uint64 `json:"amount"`
+	Requester    string `json:"requester"`
+	Confirmer    string `json:"confirmer"`
+	Status       string `json:"status"`
+	Irreversible bool   `json:"irreversible"`
 }
 
 type GovernanceProposal struct {
@@ -208,49 +213,49 @@ type FinalityVoteSignature struct {
 }
 
 type Vote struct {
-	ValidatorAddress string    `json:"validator_address"`
-	PubKey           string    `json:"pub_key"`
-	BlockHash        string    `json:"block_hash"`
-	Height           uint64    `json:"height"`
-	Round            int64     `json:"round"`
-	Type             string    `json:"type"`
-	Timestamp        int64     `json:"timestamp"`
-	Signature        []byte    `json:"signature"`
+	ValidatorAddress string `json:"validator_address"`
+	PubKey           string `json:"pub_key"`
+	BlockHash        string `json:"block_hash"`
+	Height           uint64 `json:"height"`
+	Round            int64  `json:"round"`
+	Type             string `json:"type"`
+	Timestamp        int64  `json:"timestamp"`
+	Signature        []byte `json:"signature"`
 }
 
 type Proposal struct {
-	BlockHash    string    `json:"block_hash"`
-	Height       uint64    `json:"height"`
-	Round        int64     `json:"round"`
-	Block        *Block    `json:"block,omitempty"`
-	PolRound     int64     `json:"pol_round"`
-	Timestamp    int64     `json:"timestamp"`
-	Signature    []byte    `json:"signature"`
+	BlockHash string `json:"block_hash"`
+	Height    uint64 `json:"height"`
+	Round     int64  `json:"round"`
+	Block     *Block `json:"block,omitempty"`
+	PolRound  int64  `json:"pol_round"`
+	Timestamp int64  `json:"timestamp"`
+	Signature []byte `json:"signature"`
 }
 
 type RoundState struct {
-	Height        uint64    `json:"height"`
-	Round         int64     `json:"round"`
-	Step          string    `json:"step"`
-	Proposal      *Proposal `json:"proposal,omitempty"`
-	LockedBlock   *Block    `json:"locked_block,omitempty"`
-	Validators    []Validator `json:"validators"`
-	Proposer      string    `json:"proposer"`
+	Height      uint64      `json:"height"`
+	Round       int64       `json:"round"`
+	Step        string      `json:"step"`
+	Proposal    *Proposal   `json:"proposal,omitempty"`
+	LockedBlock *Block      `json:"locked_block,omitempty"`
+	Validators  []Validator `json:"validators"`
+	Proposer    string      `json:"proposer"`
 }
 
 type Evidence struct {
-	Type          string    `json:"type"`
-	ValidatorAddr string    `json:"validator_address"`
-	Height        uint64    `json:"height"`
-	Round         int64     `json:"round"`
-	BlockHash     string    `json:"block_hash"`
-	Timestamp     int64     `json:"timestamp"`
+	Type          string `json:"type"`
+	ValidatorAddr string `json:"validator_address"`
+	Height        uint64 `json:"height"`
+	Round         int64  `json:"round"`
+	BlockHash     string `json:"block_hash"`
+	Timestamp     int64  `json:"timestamp"`
 }
 
 type ValidatorSetUpdate struct {
-	Validator   Validator `json:"validator"`
-	Power       int64     `json:"power"`
-	UpdateType  string    `json:"update_type"`
+	Validator  Validator `json:"validator"`
+	Power      int64     `json:"power"`
+	UpdateType string    `json:"update_type"`
 }
 
 type Validator struct {
@@ -281,30 +286,30 @@ func (v Validator) RotateKey(newPubKey string, now int64) Validator {
 }
 
 type nodeState struct {
-	Chain           []Block                        `json:"chain"`
-	Pending         []Transaction                  `json:"pending"`
-	Ledger          map[string]*Account            `json:"ledger"`
-	Registry        map[string]ModelRef            `json:"registry"`
-	Consensus       string                         `json:"consensus"`
-	Authorities     []string                       `json:"authorities"`
-	TokenSupply     uint64                         `json:"token_supply"`
-	Escrows         map[string]Escrow              `json:"escrows"`
-	Proposals       map[string]GovernanceProposal  `json:"proposals"`
-	Agreements      map[string]ServiceAgreement    `json:"agreements"`
-	UsageMeters     map[string]UsageMeter          `json:"usage_meters"`
-	UsedNonces      map[string]map[uint64]struct{} `json:"used_nonces"`
-	SeenTxIDs       map[string]struct{}            `json:"seen_tx_ids"`
-	AuditTrail      []AuditEntry                   `json:"audit_trail"`
-	NextNonce       map[string]uint64              `json:"next_nonce"`
-	FinalizedBlocks map[uint64]struct{}            `json:"finalized_blocks"`
-	LastFinalized   uint64                         `json:"last_finalized"`
-	AgentTxCount    uint64                         `json:"agent_tx_count"`
-	MintPaused      bool                           `json:"mint_paused"`
-	MintPauseUntil  int64                          `json:"mint_pause_until"`
-	UniversalWallets map[string]UniversalWallet   `json:"universal_wallets"`
+	Chain              []Block                            `json:"chain"`
+	Pending            []Transaction                      `json:"pending"`
+	Ledger             map[string]*Account                `json:"ledger"`
+	Registry           map[string]ModelRef                `json:"registry"`
+	Consensus          string                             `json:"consensus"`
+	Authorities        []string                           `json:"authorities"`
+	TokenSupply        uint64                             `json:"token_supply"`
+	Escrows            map[string]Escrow                  `json:"escrows"`
+	Proposals          map[string]GovernanceProposal      `json:"proposals"`
+	Agreements         map[string]ServiceAgreement        `json:"agreements"`
+	UsageMeters        map[string]UsageMeter              `json:"usage_meters"`
+	UsedNonces         map[string]map[uint64]struct{}     `json:"used_nonces"`
+	SeenTxIDs          map[string]struct{}                `json:"seen_tx_ids"`
+	AuditTrail         []AuditEntry                       `json:"audit_trail"`
+	NextNonce          map[string]uint64                  `json:"next_nonce"`
+	FinalizedBlocks    map[uint64]struct{}                `json:"finalized_blocks"`
+	LastFinalized      uint64                             `json:"last_finalized"`
+	AgentTxCount       uint64                             `json:"agent_tx_count"`
+	MintPaused         bool                               `json:"mint_paused"`
+	MintPauseUntil     int64                              `json:"mint_pause_until"`
+	UniversalWallets   map[string]UniversalWallet         `json:"universal_wallets"`
 	FinalitySignatures map[uint64][]FinalityVoteSignature `json:"finality_signatures"`
-	PendingReversals map[string]PendingReversal   `json:"pending_reversals"`
-	IrreversibleTxs map[string]struct{}           `json:"irreversible_txs"`
+	PendingReversals   map[string]PendingReversal         `json:"pending_reversals"`
+	IrreversibleTxs    map[string]struct{}                `json:"irreversible_txs"`
 }
 
 type Snapshot struct {
@@ -317,19 +322,19 @@ type Snapshot struct {
 		TxCount      uint64    `json:"tx_count"`
 		ValidatorSet string    `json:"validator_set"`
 	} `json:"header"`
-	Accounts      map[string]*Account   `json:"accounts"`
-	Registry      map[string]ModelRef `json:"registry"`
-	Escrows       map[string]Escrow     `json:"escrows"`
-	Proposals     map[string]GovernanceProposal `json:"governance_proposals"`
-	Agreements    map[string]ServiceAgreement    `json:"service_agreements"`
-	UsageMeters   map[string]UsageMeter `json:"usage_meters"`
-	UsedNonces    map[string]map[uint64]struct{} `json:"used_nonces"`
-	NextNonce     map[string]uint64      `json:"next_nonce"`
-	SeenTxIDs     map[string]struct{}     `json:"seen_tx_ids"`
-	Validators    map[string]Validator      `json:"validators"`
-	AuditTrail    []AuditEntry         `json:"audit_trail"`
-	TokenSupply   uint64               `json:"token_supply"`
-	Wallets       map[string]ManagedWallet `json:"managed_wallets"`
+	Accounts    map[string]*Account            `json:"accounts"`
+	Registry    map[string]ModelRef            `json:"registry"`
+	Escrows     map[string]Escrow              `json:"escrows"`
+	Proposals   map[string]GovernanceProposal  `json:"governance_proposals"`
+	Agreements  map[string]ServiceAgreement    `json:"service_agreements"`
+	UsageMeters map[string]UsageMeter          `json:"usage_meters"`
+	UsedNonces  map[string]map[uint64]struct{} `json:"used_nonces"`
+	NextNonce   map[string]uint64              `json:"next_nonce"`
+	SeenTxIDs   map[string]struct{}            `json:"seen_tx_ids"`
+	Validators  map[string]Validator           `json:"validators"`
+	AuditTrail  []AuditEntry                   `json:"audit_trail"`
+	TokenSupply uint64                         `json:"token_supply"`
+	Wallets     map[string]ManagedWallet       `json:"managed_wallets"`
 }
 
 type StateStore struct {
@@ -406,7 +411,6 @@ func (s *StateStore) pruneSnapshotFiles(names []string) {
 		_ = os.Remove(path)
 	}
 }
-
 
 func (s *StateStore) readSnapshot(path string) error {
 	f, err := os.Open(path)
@@ -518,7 +522,7 @@ func (w *Wallet) Sign(tx Transaction) Transaction {
 	tx.Timestamp = time.Now().Unix()
 	payload := CanonicalSigningBytes(tx)
 	hash := sha256.Sum256(payload)
-tx.ID = hex.EncodeToString(hash[:])
+	tx.ID = hex.EncodeToString(hash[:])
 	tx.Signature = hex.EncodeToString(ed25519.Sign(w.PrivateKey, payload))
 	return tx
 }
@@ -551,7 +555,7 @@ func CalculateMerkleRoot(transactions []Transaction) string {
 		return ""
 	}
 	var hashes [][]byte
-for _, tx := range transactions {
+	for _, tx := range transactions {
 		sum := sha256.Sum256([]byte(tx.ID))
 		hashes = append(hashes, sum[:])
 	}
